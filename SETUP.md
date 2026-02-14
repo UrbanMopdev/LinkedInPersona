@@ -7,8 +7,8 @@
    - **Project URL** (`NEXT_PUBLIC_SUPABASE_URL`)
    - **anon / public key** (`NEXT_PUBLIC_SUPABASE_ANON_KEY`)
 3. In the **SQL Editor**, run the migration at `supabase/migrations/00001_initial_schema.sql`.
-4. Under **Authentication → Providers**, make sure **Email** is enabled and
-   "Enable Email OTP (Magic Link)" is turned on.
+4. Under **Authentication → Providers**, make sure **Email** is enabled.
+   Optionally disable "Confirm email" for faster local development.
 5. Under **Authentication → URL Configuration**, add your production URL to
    **Site URL** and **Redirect URLs** (e.g. `https://your-app.vercel.app/**`).
 
