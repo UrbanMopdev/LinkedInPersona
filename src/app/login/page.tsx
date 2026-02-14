@@ -4,6 +4,14 @@ import { createClient } from "@/lib/supabase/client";
 import { FormEvent, useEffect, useState } from "react";
 
 const COOLDOWN_SECONDS = 60;
+const LS_KEY = "magic_link_sent_at";
+
+function getRemainingCooldown(): number {
+  const sentAt = localStorage.getItem(LS_KEY);
+  if (!sentAt) return 0;
+  const elapsed = Math.floor((Date.now() - Number(sentAt)) / 1000);
+  return Math.max(0, COOLDOWN_SECONDS - elapsed);
+}
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
@@ -11,6 +19,12 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [cooldown, setCooldown] = useState(0);
+
+  // Restore cooldown from localStorage on mount
+  useEffect(() => {
+    const remaining = getRemainingCooldown();
+    if (remaining > 0) setCooldown(remaining);
+  }, []);
 
   useEffect(() => {
     if (cooldown <= 0) return;
@@ -37,6 +51,7 @@ export default function LoginPage() {
     } else {
       setSent(true);
       setCooldown(COOLDOWN_SECONDS);
+      localStorage.setItem(LS_KEY, String(Date.now()));
     }
     setLoading(false);
   }
