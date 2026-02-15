@@ -45,6 +45,10 @@ import {
   StickyNote,
   ChevronDown,
   ChevronUp,
+  Database,
+  Users,
+  Monitor,
+  FileType,
 } from "lucide-react";
 
 /* ------------------------------------------------------------------ */
@@ -71,6 +75,9 @@ interface Post {
   scheduled_at: string | null;
   published_at: string | null;
   pillar: string | null;
+  platform: string | null;
+  post_type: string | null;
+  target_icp: string | null;
   tags: string[] | null;
   notes: string | null;
   linkedin_url: string | null;
@@ -79,6 +86,10 @@ interface Post {
   created_at: string;
   updated_at: string;
   ideas: { title: string } | null;
+}
+
+interface NotionFieldOptions {
+  [field: string]: Array<{ name: string; color?: string }>;
 }
 
 interface PostVersion {
@@ -127,9 +138,16 @@ export default function WriteClient() {
   const [postStatus, setPostStatus] = useState("draft");
   const [postScheduledAt, setPostScheduledAt] = useState("");
   const [postPillar, setPostPillar] = useState("");
+  const [postPlatform, setPostPlatform] = useState("LinkedIn");
+  const [postPostType, setPostPostType] = useState("");
+  const [postTargetIcp, setPostTargetIcp] = useState("");
   const [postTags, setPostTags] = useState("");
   const [postNotes, setPostNotes] = useState("");
   const [postLinkedinUrl, setPostLinkedinUrl] = useState("");
+
+  /* ---- Notion schema options ---- */
+  const [notionOptions, setNotionOptions] = useState<NotionFieldOptions>({});
+  const [notionConnected, setNotionConnected] = useState(false);
 
   /* ---- version history ---- */
   const [versions, setVersions] = useState<PostVersion[]>([]);
@@ -165,6 +183,16 @@ export default function WriteClient() {
   useEffect(() => {
     loadIdeas();
     loadPosts();
+    // Fetch Notion database schema for select options
+    fetch("/api/notion/schema")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data?.fieldOptions) {
+          setNotionOptions(data.fieldOptions);
+          setNotionConnected(true);
+        }
+      })
+      .catch(() => {});
   }, [loadIdeas, loadPosts]);
 
   useEffect(() => {
@@ -323,6 +351,9 @@ export default function WriteClient() {
         status: postStatus,
         scheduled_at: postScheduledAt || null,
         pillar: postPillar || null,
+        platform: postPlatform || null,
+        post_type: postPostType || null,
+        target_icp: postTargetIcp || null,
         tags: postTags ? postTags.split(",").map((t) => t.trim()).filter(Boolean) : [],
         notes: postNotes || null,
         linkedin_url: postLinkedinUrl || null,
@@ -344,6 +375,9 @@ export default function WriteClient() {
     setPostStatus(post.status);
     setPostScheduledAt(post.scheduled_at ? post.scheduled_at.slice(0, 10) : "");
     setPostPillar(post.pillar || "");
+    setPostPlatform(post.platform || "LinkedIn");
+    setPostPostType(post.post_type || "");
+    setPostTargetIcp(post.target_icp || "");
     setPostTags(post.tags?.join(", ") || "");
     setPostNotes(post.notes || "");
     setPostLinkedinUrl(post.linkedin_url || "");
@@ -361,6 +395,9 @@ export default function WriteClient() {
     setPostStatus("draft");
     setPostScheduledAt("");
     setPostPillar("");
+    setPostPlatform("LinkedIn");
+    setPostPostType("");
+    setPostTargetIcp("");
     setPostTags("");
     setPostNotes("");
     setPostLinkedinUrl("");
@@ -689,37 +726,162 @@ export default function WriteClient() {
                   <h4 className="text-sm font-semibold mb-4 flex items-center gap-2">
                     <CalendarDays className="h-4 w-4" />
                     Planning
+                    {notionConnected && (
+                      <Badge variant="outline" className="ml-auto text-[10px] gap-1">
+                        <Database className="h-3 w-3" />
+                        Notion
+                      </Badge>
+                    )}
                   </h4>
                   <div className="space-y-3">
+                    {/* Status */}
                     <div>
                       <label className="text-xs text-muted-foreground block mb-1">Status</label>
-                      <Select value={postStatus} onValueChange={setPostStatus}>
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="draft">Draft</SelectItem>
-                          <SelectItem value="scheduled">Scheduled</SelectItem>
-                          <SelectItem value="published">Published</SelectItem>
-                        </SelectContent>
-                      </Select>
+                      {notionOptions.status && notionOptions.status.length > 0 ? (
+                        <Select value={postStatus} onValueChange={setPostStatus}>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="draft">Drafting</SelectItem>
+                            <SelectItem value="scheduled">Scheduled</SelectItem>
+                            <SelectItem value="published">Published</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <Select value={postStatus} onValueChange={setPostStatus}>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="draft">Drafting</SelectItem>
+                            <SelectItem value="scheduled">Scheduled</SelectItem>
+                            <SelectItem value="published">Published</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      )}
                     </div>
+
+                    {/* Publish Date */}
                     <div>
-                      <label className="text-xs text-muted-foreground block mb-1">Publish Date</label>
+                      <label className="text-xs text-muted-foreground block mb-1">Post Publish Date</label>
                       <Input
                         type="date"
                         value={postScheduledAt}
                         onChange={(e) => setPostScheduledAt(e.target.value)}
                       />
                     </div>
+
+                    {/* Pillar */}
                     <div>
                       <label className="text-xs text-muted-foreground block mb-1">Pillar</label>
-                      <Input
-                        placeholder="e.g. Thought Leadership, Educational..."
-                        value={postPillar}
-                        onChange={(e) => setPostPillar(e.target.value)}
-                      />
+                      {notionOptions.pillar && notionOptions.pillar.length > 0 ? (
+                        <Select value={postPillar} onValueChange={setPostPillar}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select pillar..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="">None</SelectItem>
+                            {notionOptions.pillar.map((opt) => (
+                              <SelectItem key={opt.name} value={opt.name}>
+                                {opt.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <Input
+                          placeholder="e.g. Real Decisions Real Trade-offs..."
+                          value={postPillar}
+                          onChange={(e) => setPostPillar(e.target.value)}
+                        />
+                      )}
                     </div>
+
+                    {/* Platform */}
+                    <div>
+                      <label className="text-xs text-muted-foreground flex items-center gap-1 mb-1">
+                        <Monitor className="h-3 w-3" /> Platform
+                      </label>
+                      {notionOptions.platform && notionOptions.platform.length > 0 ? (
+                        <Select value={postPlatform} onValueChange={setPostPlatform}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select platform..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {notionOptions.platform.map((opt) => (
+                              <SelectItem key={opt.name} value={opt.name}>
+                                {opt.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <Input
+                          placeholder="e.g. LinkedIn"
+                          value={postPlatform}
+                          onChange={(e) => setPostPlatform(e.target.value)}
+                        />
+                      )}
+                    </div>
+
+                    {/* Post Type */}
+                    <div>
+                      <label className="text-xs text-muted-foreground flex items-center gap-1 mb-1">
+                        <FileType className="h-3 w-3" /> Post Type
+                      </label>
+                      {notionOptions.post_type && notionOptions.post_type.length > 0 ? (
+                        <Select value={postPostType} onValueChange={setPostPostType}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select post type..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="">None</SelectItem>
+                            {notionOptions.post_type.map((opt) => (
+                              <SelectItem key={opt.name} value={opt.name}>
+                                {opt.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <Input
+                          placeholder="e.g. Short insight, Commentary..."
+                          value={postPostType}
+                          onChange={(e) => setPostPostType(e.target.value)}
+                        />
+                      )}
+                    </div>
+
+                    {/* Target ICP */}
+                    <div>
+                      <label className="text-xs text-muted-foreground flex items-center gap-1 mb-1">
+                        <Users className="h-3 w-3" /> Target ICP
+                      </label>
+                      {notionOptions.target_icp && notionOptions.target_icp.length > 0 ? (
+                        <Select value={postTargetIcp} onValueChange={setPostTargetIcp}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select target ICP..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="">None</SelectItem>
+                            {notionOptions.target_icp.map((opt) => (
+                              <SelectItem key={opt.name} value={opt.name}>
+                                {opt.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <Input
+                          placeholder="e.g. Operator-Founders in Services..."
+                          value={postTargetIcp}
+                          onChange={(e) => setPostTargetIcp(e.target.value)}
+                        />
+                      )}
+                    </div>
+
+                    {/* Tags */}
                     <div>
                       <label className="text-xs text-muted-foreground flex items-center gap-1 mb-1">
                         <Tag className="h-3 w-3" /> Tags
@@ -730,19 +892,23 @@ export default function WriteClient() {
                         onChange={(e) => setPostTags(e.target.value)}
                       />
                     </div>
+
+                    {/* Signal Notes */}
                     <div>
                       <label className="text-xs text-muted-foreground flex items-center gap-1 mb-1">
-                        <StickyNote className="h-3 w-3" /> Notes
+                        <StickyNote className="h-3 w-3" /> Signal Notes
                       </label>
                       <Textarea
                         className="min-h-[60px]"
-                        placeholder="Internal notes..."
+                        placeholder="Signal notes..."
                         value={postNotes}
                         onChange={(e) => setPostNotes(e.target.value)}
                       />
                     </div>
+
+                    {/* LinkedIn URL / Link */}
                     <div>
-                      <label className="text-xs text-muted-foreground block mb-1">LinkedIn URL</label>
+                      <label className="text-xs text-muted-foreground block mb-1">Link</label>
                       <Input
                         placeholder="https://linkedin.com/..."
                         value={postLinkedinUrl}
@@ -839,6 +1005,15 @@ export default function WriteClient() {
                         <div className="flex items-center gap-2 mt-2 flex-wrap">
                           {post.pillar && (
                             <Badge variant="outline" className="text-xs">{post.pillar}</Badge>
+                          )}
+                          {post.platform && (
+                            <Badge variant="secondary" className="text-xs">{post.platform}</Badge>
+                          )}
+                          {post.post_type && (
+                            <Badge variant="secondary" className="text-xs">{post.post_type}</Badge>
+                          )}
+                          {post.target_icp && (
+                            <Badge variant="outline" className="text-[10px]">{post.target_icp}</Badge>
                           )}
                           {post.scheduled_at && (
                             <span className="text-xs text-muted-foreground">

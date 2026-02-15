@@ -11,14 +11,17 @@
 /* ------------------------------------------------------------------ */
 
 export const DEFAULT_PROPERTY_MAP: Record<string, string> = {
-  title: "Name",
+  title: "Post Title",
   status: "Status",
-  publish_date: "Publish Date",
+  publish_date: "Post Publish Date",
   pillar: "Pillar",
+  platform: "Platform",
+  post_type: "Post Type",
+  target_icp: "Target ICP",
   content: "Draft/Copy",
-  linkedin_url: "LinkedIn URL",
+  linkedin_url: "Link",
   tags: "Tags",
-  notes: "Notes",
+  notes: "Signal Notes",
   impressions: "Impressions",
   likes: "Likes",
   comments: "Comments",
@@ -36,6 +39,9 @@ interface ExtractedPost {
   status: string | null;
   publish_date: string | null;
   pillar: string | null;
+  platform: string | null;
+  post_type: string | null;
+  target_icp: string | null;
   content: string | null;
   linkedin_url: string | null;
   tags: string[];
@@ -59,6 +65,9 @@ export function extractPostFromNotionPage(
     status: readSelect(props, propertyMap.status),
     publish_date: readDate(props, propertyMap.publish_date),
     pillar: readSelect(props, propertyMap.pillar) ?? readRichText(props, propertyMap.pillar),
+    platform: readSelect(props, propertyMap.platform) ?? readRichText(props, propertyMap.platform),
+    post_type: readSelect(props, propertyMap.post_type) ?? readRichText(props, propertyMap.post_type),
+    target_icp: readSelect(props, propertyMap.target_icp) ?? readRichText(props, propertyMap.target_icp),
     content: readRichText(props, propertyMap.content),
     linkedin_url: readUrl(props, propertyMap.linkedin_url),
     tags: readMultiSelect(props, propertyMap.tags),
@@ -80,6 +89,9 @@ interface PostData {
   published_at: string | null;
   linkedin_url: string | null;
   pillar: string | null;
+  platform: string | null;
+  post_type: string | null;
+  target_icp: string | null;
   tags: string[] | null;
   notes: string | null;
   impressions?: number | null;
@@ -146,6 +158,21 @@ export function buildNotionProperties(
     props[propertyMap.pillar] = { select: { name: post.pillar } };
   }
 
+  // Platform (select)
+  if (propertyMap.platform && post.platform) {
+    props[propertyMap.platform] = { select: { name: post.platform } };
+  }
+
+  // Post Type (select)
+  if (propertyMap.post_type && post.post_type) {
+    props[propertyMap.post_type] = { select: { name: post.post_type } };
+  }
+
+  // Target ICP (select)
+  if (propertyMap.target_icp && post.target_icp) {
+    props[propertyMap.target_icp] = { select: { name: post.target_icp } };
+  }
+
   // Tags (multi_select)
   if (propertyMap.tags && post.tags && post.tags.length > 0) {
     props[propertyMap.tags] = {
@@ -188,7 +215,20 @@ export function mapNotionStatusToApp(notionStatus: string | null): string {
   if (lower === "published" || lower === "posted" || lower === "live")
     return "published";
   if (lower === "scheduled") return "scheduled";
+  // "Drafting", "Draft", "In Progress", etc. all map to draft
   return "draft";
+}
+
+export function mapAppStatusToNotionLabel(appStatus: string): string {
+  // Returns the user-facing Notion label (preserves their convention)
+  switch (appStatus) {
+    case "published":
+      return "Published";
+    case "scheduled":
+      return "Scheduled";
+    default:
+      return "Drafting";
+  }
 }
 
 export function mapAppStatusToNotion(appStatus: string): string {
@@ -198,7 +238,7 @@ export function mapAppStatusToNotion(appStatus: string): string {
     case "scheduled":
       return "Scheduled";
     default:
-      return "Draft";
+      return "Drafting";
   }
 }
 

@@ -96,6 +96,9 @@ export async function updatePostFields(
     status?: string;
     scheduled_at?: string | null;
     pillar?: string | null;
+    platform?: string | null;
+    post_type?: string | null;
+    target_icp?: string | null;
     tags?: string[];
     notes?: string | null;
     linkedin_url?: string | null;
@@ -179,7 +182,7 @@ export async function getCalendarPosts() {
   const { supabase, user } = await getUser();
   const { data, error } = await supabase
     .from("posts")
-    .select("id, title, content, status, scheduled_at, published_at, pillar, tags, notion_page_id")
+    .select("id, title, content, status, scheduled_at, published_at, pillar, platform, post_type, target_icp, tags, notes, linkedin_url, notion_page_id")
     .eq("user_id", user.id)
     .in("status", ["scheduled", "published", "draft"])
     .order("scheduled_at", { ascending: true });
