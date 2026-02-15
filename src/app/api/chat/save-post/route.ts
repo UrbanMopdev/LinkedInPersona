@@ -22,6 +22,7 @@ export async function POST(req: Request) {
     tags,
     status,
     notes,
+    message_id,
   } = body;
 
   if (!content || typeof content !== "string") {
@@ -43,21 +44,24 @@ export async function POST(req: Request) {
       notionState?.is_connected && notionState?.auto_create_in_notion;
 
     // Create the post
+    const insertPayload: Record<string, unknown> = {
+      user_id: user.id,
+      title: title || null,
+      content,
+      status: status || "draft",
+      pillar: pillar || null,
+      platform: platform || "LinkedIn",
+      post_type: post_type || null,
+      target_icp: target_icp || null,
+      tags: tags && tags.length > 0 ? tags : [],
+      notes: notes || null,
+    };
+    if (message_id) insertPayload.message_id = message_id;
+    if (shouldMarkPending) insertPayload.sync_status = "pending";
+
     const { data: post, error: postError } = await supabase
       .from("posts")
-      .insert({
-        user_id: user.id,
-        title: title || null,
-        content,
-        status: status || "draft",
-        pillar: pillar || null,
-        platform: platform || "LinkedIn",
-        post_type: post_type || null,
-        target_icp: target_icp || null,
-        tags: tags && tags.length > 0 ? tags : [],
-        notes: notes || null,
-        ...(shouldMarkPending ? { sync_status: "pending" } : {}),
-      })
+      .insert(insertPayload)
       .select("id")
       .single();
 
