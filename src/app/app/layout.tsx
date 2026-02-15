@@ -31,6 +31,7 @@ export default async function AppLayout({
         </a>
         <nav style={{ display: "flex", gap: 16, alignItems: "center" }}>
           <a href="/app/write">Write</a>
+          <a href="/app/chat">Chat</a>
           <a href="/app/settings">Settings</a>
           <form action="/auth/signout" method="post">
             <button type="submit">Sign out</button>

@@ -6,7 +6,10 @@
 2. Go to **Project Settings → API** and copy:
    - **Project URL** (`NEXT_PUBLIC_SUPABASE_URL`)
    - **anon / public key** (`NEXT_PUBLIC_SUPABASE_ANON_KEY`)
-3. In the **SQL Editor**, run the migration at `supabase/migrations/00001_initial_schema.sql`.
+3. In the **SQL Editor**, run the migrations in order:
+   - `supabase/migrations/00001_initial_schema.sql`
+   - `supabase/migrations/00002_add_voice_guide_and_linkedin_url.sql`
+   - `supabase/migrations/00003_chat_and_vectors.sql` (enables pgvector, adds chat tables)
 4. Under **Authentication → Providers**, make sure **Email** is enabled.
    Optionally disable "Confirm email" for faster local development.
 5. Under **Authentication → URL Configuration**, add your production URL to
@@ -30,6 +33,7 @@ In the Vercel dashboard for the project, add these environment variables:
 | `NEXT_PUBLIC_SUPABASE_URL`       | `https://<ref>.supabase.co`        |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY`  | Your Supabase anon/public key      |
 | `ANTHROPIC_API_KEY`              | Your Anthropic API key             |
+| `VOYAGE_API_KEY`                 | Your Voyage AI API key (optional)  |
 
 These are required for **all** environments (Production, Preview, Development).
 
@@ -53,5 +57,18 @@ The migration creates the following tables (all with RLS enabled):
 | `post_versions`    | Version history for post edits             |
 | `post_analytics`   | Engagement metrics per post                |
 | `weekly_reports`   | Aggregated weekly performance summaries    |
+| `conversations`    | Chat conversation threads                  |
+| `messages`         | Chat messages (user + assistant)           |
+| `user_memory`      | User context/memories with vector embeddings |
+| `linkedin_posts_archive` | Archived posts with vector embeddings |
 
 Every table enforces RLS so that users can only read/write their own rows.
+
+## 5. Voyage AI (optional, for vector search)
+
+The chat system uses [Voyage AI](https://voyageai.com) for generating embeddings.
+Without a `VOYAGE_API_KEY`, the chat still works but skips vector-based context retrieval.
+
+1. Sign up at [dash.voyageai.com](https://dash.voyageai.com)
+2. Create an API key
+3. Add it to your `.env.local` as `VOYAGE_API_KEY`
