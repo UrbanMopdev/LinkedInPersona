@@ -1,11 +1,11 @@
 import { generateText } from "ai";
-import { openai } from "@ai-sdk/openai";
+import { anthropic } from "@ai-sdk/anthropic";
 import { createClient } from "@/lib/supabase/server";
 
 export async function POST(req: Request) {
-  if (!process.env.OPENAI_API_KEY) {
+  if (!process.env.ANTHROPIC_API_KEY) {
     return Response.json(
-      { error: "OPENAI_API_KEY is not configured. Add it to your .env.local file." },
+      { error: "ANTHROPIC_API_KEY is not configured. Add it to your .env.local file." },
       { status: 500 },
     );
   }
@@ -46,7 +46,7 @@ export async function POST(req: Request) {
 
   try {
     const { text } = await generateText({
-      model: openai("gpt-4o-mini"),
+      model: anthropic("claude-sonnet-4-5-20250929"),
       system: systemPrompt,
       prompt: `Write a LinkedIn post based on this idea:\nTitle: ${ideaTitle}\n${ideaBody ? `Description: ${ideaBody}` : ""}`,
     });

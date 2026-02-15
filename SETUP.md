@@ -16,7 +16,7 @@
 
 ```bash
 cp .env.local.example .env.local
-# Fill in the two Supabase values
+# Fill in the two Supabase values and your Anthropic API key
 npm install
 npm run dev
 ```
@@ -29,6 +29,7 @@ In the Vercel dashboard for the project, add these environment variables:
 |----------------------------------|------------------------------------|
 | `NEXT_PUBLIC_SUPABASE_URL`       | `https://<ref>.supabase.co`        |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY`  | Your Supabase anon/public key      |
+| `ANTHROPIC_API_KEY`              | Your Anthropic API key             |
 
 These are required for **all** environments (Production, Preview, Development).
 
