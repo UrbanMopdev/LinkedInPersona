@@ -70,6 +70,16 @@ export async function createPost(content: string, ideaId?: string) {
   } = await supabase.auth.getUser();
   if (!user) throw new Error("Not authenticated");
 
+  // Check if Notion is connected with auto-create to mark for sync
+  const { data: notionState } = await supabase
+    .from("notion_sync_state")
+    .select("auto_create_in_notion, is_connected")
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  const shouldMarkPending =
+    notionState?.is_connected && notionState?.auto_create_in_notion;
+
   const { data: post, error: postError } = await supabase
     .from("posts")
     .insert({
@@ -77,6 +87,7 @@ export async function createPost(content: string, ideaId?: string) {
       content,
       idea_id: ideaId || null,
       status: "draft",
+      ...(shouldMarkPending ? { sync_status: "pending" } : {}),
     })
     .select()
     .single();
@@ -122,11 +133,22 @@ export async function updatePostContent(postId: string, content: string) {
     .eq("user_id", user.id)
     .single();
 
+  // Check if Notion auto-create is on (for posts not yet linked)
+  const { data: notionState } = await supabase
+    .from("notion_sync_state")
+    .select("auto_create_in_notion, is_connected")
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  const shouldMarkPending =
+    existingPost?.notion_page_id ||
+    (notionState?.is_connected && notionState?.auto_create_in_notion);
+
   const updatePayload: Record<string, unknown> = {
     content,
     updated_at: new Date().toISOString(),
   };
-  if (existingPost?.notion_page_id) {
+  if (shouldMarkPending) {
     updatePayload.sync_status = "pending";
   }
 
@@ -237,13 +259,24 @@ export async function markAsPosted(postId: string, linkedinUrl?: string) {
     .eq("user_id", user.id)
     .single();
 
+  // Check if Notion auto-create is on (for posts not yet linked)
+  const { data: notionState } = await supabase
+    .from("notion_sync_state")
+    .select("auto_create_in_notion, is_connected")
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  const shouldMarkPending =
+    existingPost?.notion_page_id ||
+    (notionState?.is_connected && notionState?.auto_create_in_notion);
+
   const updatePayload: Record<string, unknown> = {
     status: "published",
     published_at: new Date().toISOString(),
     linkedin_url: linkedinUrl || null,
     updated_at: new Date().toISOString(),
   };
-  if (existingPost?.notion_page_id) {
+  if (shouldMarkPending) {
     updatePayload.sync_status = "pending";
   }
 

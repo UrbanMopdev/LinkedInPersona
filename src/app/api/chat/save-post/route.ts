@@ -32,6 +32,16 @@ export async function POST(req: Request) {
   }
 
   try {
+    // Check if Notion auto-create is on
+    const { data: notionState } = await supabase
+      .from("notion_sync_state")
+      .select("auto_create_in_notion, is_connected")
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    const shouldMarkPending =
+      notionState?.is_connected && notionState?.auto_create_in_notion;
+
     // Create the post
     const { data: post, error: postError } = await supabase
       .from("posts")
@@ -46,6 +56,7 @@ export async function POST(req: Request) {
         target_icp: target_icp || null,
         tags: tags && tags.length > 0 ? tags : [],
         notes: notes || null,
+        ...(shouldMarkPending ? { sync_status: "pending" } : {}),
       })
       .select("id")
       .single();
