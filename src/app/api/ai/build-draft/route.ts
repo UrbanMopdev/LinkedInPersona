@@ -23,14 +23,14 @@ export async function POST(req: Request) {
     return Response.json({ error: "ideaTitle is required" }, { status: 400 });
   }
 
-  // Fetch voice guide
+  // Fetch voice guide + voice fingerprint
   const { data: profile } = await supabase
     .from("profiles")
-    .select("voice_guide")
+    .select("voice_guide, voice_fingerprint")
     .eq("id", user.id)
     .single();
 
-  const voiceGuide = profile?.voice_guide || "";
+  const voiceGuide = profile?.voice_fingerprint || profile?.voice_guide || "";
 
   const systemPrompt = [
     "You are an expert LinkedIn ghostwriter.",
