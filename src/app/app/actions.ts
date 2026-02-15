@@ -178,6 +178,20 @@ export async function reschedulePost(
   revalidatePath("/app/posts");
 }
 
+export async function getLastSyncTime() {
+  const { supabase, user } = await getUser();
+  const { data } = await supabase
+    .from("notion_sync_state")
+    .select("last_incremental_sync_at, last_full_sync_at, is_connected, auto_create_in_notion")
+    .eq("user_id", user.id)
+    .maybeSingle();
+  if (!data || !data.is_connected) return null;
+  return {
+    lastSyncAt: data.last_incremental_sync_at || data.last_full_sync_at || null,
+    autoCreate: data.auto_create_in_notion || false,
+  };
+}
+
 export async function getCalendarPosts() {
   const { supabase, user } = await getUser();
   const { data, error } = await supabase

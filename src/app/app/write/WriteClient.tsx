@@ -9,6 +9,7 @@ import {
   updatePostContent,
   getPosts,
   getPostVersions,
+  deletePost,
 } from "./actions";
 import { updatePostFields } from "../actions";
 import { Button } from "@/components/ui/button";
@@ -152,6 +153,9 @@ export default function WriteClient() {
   /* ---- version history ---- */
   const [versions, setVersions] = useState<PostVersion[]>([]);
   const [showVersions, setShowVersions] = useState(false);
+
+  /* ---- delete confirmation ---- */
+  const [deletingPostId, setDeletingPostId] = useState<string | null>(null);
 
   /* ---- active tab ---- */
   const [activeTab, setActiveTab] = useState("drafts");
@@ -416,6 +420,22 @@ export default function WriteClient() {
     setDraftContent(v.content);
     setDraftSuccess(`Restored version ${v.version_number}`);
     setTimeout(() => setDraftSuccess(""), 2000);
+  }
+
+  async function handleDeletePost(postId: string) {
+    try {
+      await deletePost(postId);
+      if (editingPostId === postId) {
+        handleNewDraft();
+      }
+      setDeletingPostId(null);
+      setDraftSuccess("Post deleted");
+      setTimeout(() => setDraftSuccess(""), 2000);
+      await loadPosts();
+    } catch (e: unknown) {
+      setDraftError(e instanceof Error ? e.message : "Delete failed");
+      setDeletingPostId(null);
+    }
   }
 
   /* ================================================================ */
@@ -1025,9 +1045,38 @@ export default function WriteClient() {
                           </span>
                         </div>
                       </div>
-                      <Button size="sm" variant="outline" onClick={() => handleEditPost(post)}>
-                        Edit
-                      </Button>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <Button size="sm" variant="outline" onClick={() => handleEditPost(post)}>
+                          Edit
+                        </Button>
+                        {deletingPostId === post.id ? (
+                          <div className="flex items-center gap-1">
+                            <Button
+                              size="sm"
+                              variant="destructive"
+                              onClick={() => handleDeletePost(post.id)}
+                            >
+                              Confirm
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => setDeletingPostId(null)}
+                            >
+                              Cancel
+                            </Button>
+                          </div>
+                        ) : (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => setDeletingPostId(post.id)}
+                            className="text-muted-foreground hover:text-destructive"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                      </div>
                     </div>
                   </CardContent>
                 </Card>

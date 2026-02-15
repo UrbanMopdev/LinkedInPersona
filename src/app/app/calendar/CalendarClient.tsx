@@ -1,14 +1,24 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { getCalendarPosts, reschedulePost } from "../actions";
+import { getCalendarPosts, reschedulePost, updatePostFields, getLastSyncTime } from "../actions";
+import { deletePost } from "../write/actions";
+import { updatePostContent } from "../write/actions";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PageHeader } from "@/components/page-header";
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from "@/components/ui/select";
 import {
   CalendarDays,
   ChevronLeft,
@@ -23,8 +33,12 @@ import {
   ArrowDown,
   X,
   ExternalLink,
+  Pencil,
+  Save,
+  Trash2,
+  RefreshCw,
+  Loader2,
 } from "lucide-react";
-import Link from "next/link";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -148,17 +162,143 @@ const MONTH_NAMES = [
   "July", "August", "September", "October", "November", "December",
 ];
 
+interface NotionFieldOptions {
+  [field: string]: Array<{ name: string; color?: string }>;
+}
+
 /* ------------------------------------------------------------------ */
-/*  Post Detail Popup                                                  */
+/*  Post Detail Popup (inline-editable)                                */
 /* ------------------------------------------------------------------ */
 
 function PostDetailPopup({
   post,
+  notionOptions,
   onClose,
+  onUpdated,
+  onDeleted,
 }: {
   post: CalendarPost;
+  notionOptions: NotionFieldOptions;
   onClose: () => void;
+  onUpdated: () => void;
+  onDeleted: () => void;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [editingContent, setEditingContent] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [deleteStep, setDeleteStep] = useState(0); // 0=none, 1=first confirm, 2=final confirm
+  const [deleting, setDeleting] = useState(false);
+  const [popupError, setPopupError] = useState("");
+  const [popupSuccess, setPopupSuccess] = useState("");
+
+  // Editable fields
+  const [title, setTitle] = useState(post.title || "");
+  const [status, setStatus] = useState(post.status);
+  const [pillar, setPillar] = useState(post.pillar || "");
+  const [platform, setPlatform] = useState(post.platform || "");
+  const [postType, setPostType] = useState(post.post_type || "");
+  const [targetIcp, setTargetIcp] = useState(post.target_icp || "");
+  const [scheduledAt, setScheduledAt] = useState(
+    (post.scheduled_at || post.published_at || "").slice(0, 10)
+  );
+  const [tags, setTags] = useState(post.tags?.join(", ") || "");
+  const [notes, setNotes] = useState(post.notes || "");
+  const [linkedinUrl, setLinkedinUrl] = useState(post.linkedin_url || "");
+  const [content, setContent] = useState(post.content);
+
+  async function handleSaveFields() {
+    setSaving(true);
+    setPopupError("");
+    try {
+      await updatePostFields(post.id, {
+        title: title || undefined,
+        status,
+        scheduled_at: scheduledAt ? scheduledAt + "T09:00:00Z" : null,
+        pillar: pillar || null,
+        platform: platform || null,
+        post_type: postType || null,
+        target_icp: targetIcp || null,
+        tags: tags ? tags.split(",").map((t) => t.trim()).filter(Boolean) : [],
+        notes: notes || null,
+        linkedin_url: linkedinUrl || null,
+      });
+      setPopupSuccess("Saved!");
+      setTimeout(() => setPopupSuccess(""), 1500);
+      setEditing(false);
+      onUpdated();
+    } catch (e: unknown) {
+      setPopupError(e instanceof Error ? e.message : "Save failed");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleSaveContent() {
+    setSaving(true);
+    setPopupError("");
+    try {
+      await updatePostContent(post.id, content);
+      setPopupSuccess("Content saved!");
+      setTimeout(() => setPopupSuccess(""), 1500);
+      setEditingContent(false);
+      onUpdated();
+    } catch (e: unknown) {
+      setPopupError(e instanceof Error ? e.message : "Save failed");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDelete() {
+    setDeleting(true);
+    setPopupError("");
+    try {
+      await deletePost(post.id);
+      onDeleted();
+    } catch (e: unknown) {
+      setPopupError(e instanceof Error ? e.message : "Delete failed");
+      setDeleting(false);
+      setDeleteStep(0);
+    }
+  }
+
+  function renderSelectOrInput(
+    label: string,
+    value: string,
+    onChange: (v: string) => void,
+    optionsKey: string,
+    placeholder: string
+  ) {
+    const options = notionOptions[optionsKey];
+    if (options && options.length > 0) {
+      return (
+        <div>
+          <span className="text-xs text-muted-foreground block mb-1">{label}</span>
+          <Select value={value || "_none"} onValueChange={(v) => onChange(v === "_none" ? "" : v)}>
+            <SelectTrigger className="h-8 text-sm">
+              <SelectValue placeholder={placeholder} />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="_none">None</SelectItem>
+              {options.map((opt) => (
+                <SelectItem key={opt.name} value={opt.name}>{opt.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      );
+    }
+    return (
+      <div>
+        <span className="text-xs text-muted-foreground block mb-1">{label}</span>
+        <Input className="h-8 text-sm" placeholder={placeholder} value={value} onChange={(e) => onChange(e.target.value)} />
+      </div>
+    );
+  }
+
+  const charCount = content.length;
+  const charColor = charCount > 1300 ? "text-destructive" : charCount > 1100 ? "text-amber-600" : "text-muted-foreground";
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
@@ -171,9 +311,18 @@ function PostDetailPopup({
         {/* Header */}
         <div className="flex items-start justify-between p-6 pb-4">
           <div className="flex-1 min-w-0">
-            <h2 className="text-lg font-semibold">
-              {post.title || post.content.slice(0, 60)}
-            </h2>
+            {editing ? (
+              <Input
+                className="text-lg font-semibold mb-2"
+                placeholder="Post title..."
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+              />
+            ) : (
+              <h2 className="text-lg font-semibold">
+                {post.title || post.content.slice(0, 60)}
+              </h2>
+            )}
             <div className="flex items-center gap-2 mt-2 flex-wrap">
               <Badge
                 variant={
@@ -199,76 +348,184 @@ function PostDetailPopup({
           </Button>
         </div>
 
+        {/* Alerts */}
+        {popupError && (
+          <div className="mx-6 mb-2 flex items-center gap-2 rounded-lg bg-destructive/10 border border-destructive/20 px-3 py-2 text-sm text-destructive">
+            <AlertCircle className="h-3.5 w-3.5 shrink-0" />{popupError}
+          </div>
+        )}
+        {popupSuccess && (
+          <div className="mx-6 mb-2 flex items-center gap-2 rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2 text-sm text-emerald-800">
+            <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />{popupSuccess}
+          </div>
+        )}
+
         <Separator />
 
         {/* Properties grid */}
-        <div className="p-6 grid grid-cols-2 gap-4">
-          <PropertyRow label="Pillar" value={post.pillar} />
-          <PropertyRow label="Platform" value={post.platform} />
-          <PropertyRow
-            label="Post Publish Date"
-            value={formatDate(post.scheduled_at || post.published_at)}
-          />
-          <PropertyRow label="Post Type" value={post.post_type} />
-          <PropertyRow label="Status" value={statusLabel(post.status)} />
-          <PropertyRow label="Target ICP" value={post.target_icp} />
-          {post.linkedin_url && (
-            <div className="col-span-2">
-              <span className="text-xs text-muted-foreground block mb-1">
-                Link
-              </span>
-              <a
-                href={post.linkedin_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-sm text-primary hover:text-primary/80 flex items-center gap-1"
-              >
-                <ExternalLink className="h-3 w-3" />
-                {post.linkedin_url}
-              </a>
+        {editing ? (
+          <div className="p-6 grid grid-cols-2 gap-3">
+            <div>
+              <span className="text-xs text-muted-foreground block mb-1">Status</span>
+              <Select value={status} onValueChange={setStatus}>
+                <SelectTrigger className="h-8 text-sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="draft">Drafting</SelectItem>
+                  <SelectItem value="scheduled">Scheduled</SelectItem>
+                  <SelectItem value="published">Published</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
-          )}
-          {post.tags && post.tags.length > 0 && (
-            <div className="col-span-2">
-              <span className="text-xs text-muted-foreground block mb-1">
-                Tags
-              </span>
-              <div className="flex flex-wrap gap-1">
-                {post.tags.map((tag) => (
-                  <Badge key={tag} variant="secondary" className="text-xs">
-                    {tag}
-                  </Badge>
-                ))}
-              </div>
+            <div>
+              <span className="text-xs text-muted-foreground block mb-1">Publish Date</span>
+              <Input className="h-8 text-sm" type="date" value={scheduledAt} onChange={(e) => setScheduledAt(e.target.value)} />
             </div>
-          )}
-          {post.notes && (
+            {renderSelectOrInput("Pillar", pillar, setPillar, "pillar", "Select pillar...")}
+            {renderSelectOrInput("Platform", platform, setPlatform, "platform", "e.g. LinkedIn")}
+            {renderSelectOrInput("Post Type", postType, setPostType, "post_type", "Select type...")}
+            {renderSelectOrInput("Target ICP", targetIcp, setTargetIcp, "target_icp", "Select ICP...")}
             <div className="col-span-2">
-              <span className="text-xs text-muted-foreground block mb-1">
-                Signal Notes
-              </span>
-              <p className="text-sm text-foreground">{post.notes}</p>
+              <span className="text-xs text-muted-foreground block mb-1">Tags</span>
+              <Input className="h-8 text-sm" placeholder="Comma-separated tags..." value={tags} onChange={(e) => setTags(e.target.value)} />
             </div>
-          )}
-        </div>
+            <div className="col-span-2">
+              <span className="text-xs text-muted-foreground block mb-1">Signal Notes</span>
+              <Textarea className="min-h-[60px] text-sm" placeholder="Notes..." value={notes} onChange={(e) => setNotes(e.target.value)} />
+            </div>
+            <div className="col-span-2">
+              <span className="text-xs text-muted-foreground block mb-1">Link</span>
+              <Input className="h-8 text-sm" placeholder="https://linkedin.com/..." value={linkedinUrl} onChange={(e) => setLinkedinUrl(e.target.value)} />
+            </div>
+            <div className="col-span-2 flex justify-end gap-2 mt-1">
+              <Button size="sm" variant="outline" onClick={() => setEditing(false)}>Cancel</Button>
+              <Button size="sm" onClick={handleSaveFields} disabled={saving}>
+                <Save className="h-3.5 w-3.5 mr-1.5" />
+                {saving ? "Saving..." : "Save Fields"}
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="p-6">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-xs font-medium text-muted-foreground">Properties</span>
+              <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setEditing(true)}>
+                <Pencil className="h-3 w-3 mr-1" />Edit
+              </Button>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <PropertyRow label="Pillar" value={post.pillar} />
+              <PropertyRow label="Platform" value={post.platform} />
+              <PropertyRow label="Publish Date" value={formatDate(post.scheduled_at || post.published_at)} />
+              <PropertyRow label="Post Type" value={post.post_type} />
+              <PropertyRow label="Status" value={statusLabel(post.status)} />
+              <PropertyRow label="Target ICP" value={post.target_icp} />
+              {post.linkedin_url && (
+                <div className="col-span-2">
+                  <span className="text-xs text-muted-foreground block mb-1">Link</span>
+                  <a
+                    href={post.linkedin_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sm text-primary hover:text-primary/80 flex items-center gap-1"
+                  >
+                    <ExternalLink className="h-3 w-3" />{post.linkedin_url}
+                  </a>
+                </div>
+              )}
+              {post.tags && post.tags.length > 0 && (
+                <div className="col-span-2">
+                  <span className="text-xs text-muted-foreground block mb-1">Tags</span>
+                  <div className="flex flex-wrap gap-1">
+                    {post.tags.map((tag) => (
+                      <Badge key={tag} variant="secondary" className="text-xs">{tag}</Badge>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {post.notes && (
+                <div className="col-span-2">
+                  <span className="text-xs text-muted-foreground block mb-1">Signal Notes</span>
+                  <p className="text-sm text-foreground">{post.notes}</p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         <Separator />
 
         {/* Post content */}
         <div className="p-6">
-          <span className="text-xs text-muted-foreground block mb-2">
-            Post Content
-          </span>
-          <div className="bg-muted/50 rounded-lg p-4 text-sm whitespace-pre-wrap leading-relaxed">
-            {post.content}
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-medium text-muted-foreground">Post Content</span>
+            {!editingContent && (
+              <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setEditingContent(true)}>
+                <Pencil className="h-3 w-3 mr-1" />Edit
+              </Button>
+            )}
           </div>
+          {editingContent ? (
+            <div>
+              <Textarea
+                className="min-h-[200px] text-sm"
+                value={content}
+                onChange={(e) => setContent(e.target.value)}
+              />
+              <div className={`text-right text-xs mt-1 ${charColor}`}>
+                {charCount} / 1,300
+              </div>
+              <div className="flex justify-end gap-2 mt-2">
+                <Button size="sm" variant="outline" onClick={() => { setEditingContent(false); setContent(post.content); }}>Cancel</Button>
+                <Button size="sm" onClick={handleSaveContent} disabled={saving}>
+                  <Save className="h-3.5 w-3.5 mr-1.5" />
+                  {saving ? "Saving..." : "Save Content"}
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="bg-muted/50 rounded-lg p-4 text-sm whitespace-pre-wrap leading-relaxed">
+              {post.content}
+            </div>
+          )}
         </div>
 
-        {/* Actions */}
-        <div className="flex items-center gap-3 p-6 pt-0">
-          <Link href="/app/write">
-            <Button size="sm">Edit Post</Button>
-          </Link>
+        <Separator />
+
+        {/* Actions: delete with double confirm */}
+        <div className="flex items-center justify-between p-6 pt-4">
+          <div>
+            {deleteStep === 0 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-muted-foreground hover:text-destructive"
+                onClick={() => setDeleteStep(1)}
+              >
+                <Trash2 className="h-3.5 w-3.5 mr-1.5" />
+                Delete
+              </Button>
+            )}
+            {deleteStep === 1 && (
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-destructive">Are you sure?</span>
+                <Button variant="destructive" size="sm" onClick={() => setDeleteStep(2)}>
+                  Yes, delete
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => setDeleteStep(0)}>Cancel</Button>
+              </div>
+            )}
+            {deleteStep === 2 && (
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-destructive font-medium">This cannot be undone!</span>
+                <Button variant="destructive" size="sm" onClick={handleDelete} disabled={deleting}>
+                  {deleting ? "Deleting..." : "Confirm Delete"}
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => setDeleteStep(0)}>Cancel</Button>
+              </div>
+            )}
+          </div>
           <Button variant="outline" size="sm" onClick={onClose}>
             Close
           </Button>
@@ -290,7 +547,7 @@ function PropertyRow({
       <span className="text-xs text-muted-foreground block mb-0.5">
         {label}
       </span>
-      <span className="text-sm font-medium">{value || "—"}</span>
+      <span className="text-sm font-medium">{value || "\u2014"}</span>
     </div>
   );
 }
@@ -313,6 +570,13 @@ export default function CalendarClient() {
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [selectedPost, setSelectedPost] = useState<CalendarPost | null>(null);
 
+  // Notion field options for dropdowns
+  const [notionOptions, setNotionOptions] = useState<NotionFieldOptions>({});
+
+  // Sync state
+  const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+
   // Table sort
   const [sortField, setSortField] = useState<SortField>("publish_date");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
@@ -330,9 +594,50 @@ export default function CalendarClient() {
     }
   }, []);
 
+  const loadSyncState = useCallback(async () => {
+    try {
+      const syncData = await getLastSyncTime();
+      if (syncData) setLastSyncAt(syncData.lastSyncAt);
+    } catch { /* ignore */ }
+  }, []);
+
   useEffect(() => {
     loadPosts();
-  }, [loadPosts]);
+    loadSyncState();
+    // Fetch Notion schema for dropdown options
+    fetch("/api/notion/schema")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data?.fieldOptions) setNotionOptions(data.fieldOptions);
+      })
+      .catch(() => {});
+  }, [loadPosts, loadSyncState]);
+
+  async function handleSyncNow() {
+    setSyncing(true);
+    setError("");
+    try {
+      const res = await fetch("/api/notion/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "incremental" }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      const n2a = data.notionToApp;
+      const a2n = data.appToNotion;
+      setSuccess(
+        `Synced! Notion\u2192App: ${n2a.pagesUpdated} updated. App\u2192Notion: ${a2n.pagesProcessed} pushed.`
+      );
+      setTimeout(() => setSuccess(""), 4000);
+      await loadPosts();
+      await loadSyncState();
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Sync failed");
+    } finally {
+      setSyncing(false);
+    }
+  }
 
   // Filtered posts for table
   const filteredPosts = useMemo(() => {
@@ -523,29 +828,52 @@ export default function CalendarClient() {
         title="Calendar"
         description="Plan and schedule your LinkedIn content. Table view mirrors your Notion database."
       >
-        <div className="flex items-center gap-2">
-          <Button
-            variant={view === "table" ? "default" : "outline"}
-            size="sm"
-            onClick={() => setView("table")}
-          >
-            <Table2 className="h-4 w-4 mr-1.5" />
-            Table
-          </Button>
-          <Button
-            variant={view === "month" ? "default" : "outline"}
-            size="sm"
-            onClick={() => setView("month")}
-          >
-            Month
-          </Button>
-          <Button
-            variant={view === "week" ? "default" : "outline"}
-            size="sm"
-            onClick={() => setView("week")}
-          >
-            Week
-          </Button>
+        <div className="flex items-center gap-3">
+          {/* Sync controls */}
+          {lastSyncAt && (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">
+                Last sync: {new Date(lastSyncAt).toLocaleString()}
+              </span>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2"
+                onClick={handleSyncNow}
+                disabled={syncing}
+              >
+                {syncing ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-3.5 w-3.5" />
+                )}
+              </Button>
+            </div>
+          )}
+          <div className="flex items-center gap-2">
+            <Button
+              variant={view === "table" ? "default" : "outline"}
+              size="sm"
+              onClick={() => setView("table")}
+            >
+              <Table2 className="h-4 w-4 mr-1.5" />
+              Table
+            </Button>
+            <Button
+              variant={view === "month" ? "default" : "outline"}
+              size="sm"
+              onClick={() => setView("month")}
+            >
+              Month
+            </Button>
+            <Button
+              variant={view === "week" ? "default" : "outline"}
+              size="sm"
+              onClick={() => setView("week")}
+            >
+              Week
+            </Button>
+          </div>
         </div>
       </PageHeader>
 
@@ -566,7 +894,18 @@ export default function CalendarClient() {
       {selectedPost && (
         <PostDetailPopup
           post={selectedPost}
+          notionOptions={notionOptions}
           onClose={() => setSelectedPost(null)}
+          onUpdated={() => {
+            loadPosts();
+            setSelectedPost(null);
+          }}
+          onDeleted={() => {
+            setSelectedPost(null);
+            setSuccess("Post deleted");
+            setTimeout(() => setSuccess(""), 2000);
+            loadPosts();
+          }}
         />
       )}
 
