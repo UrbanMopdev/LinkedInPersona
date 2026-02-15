@@ -10,6 +10,8 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { User, Globe, Clock, Mail } from "lucide-react";
 import LinkedInImport from "./LinkedInImport";
+import NotionSettings from "./NotionSettings";
+import NotionConflicts from "./NotionConflicts";
 
 export default async function SettingsPage() {
   const supabase = await createClient();
@@ -66,6 +68,12 @@ export default async function SettingsPage() {
           currentHeadline={profile?.linkedin_headline || null}
           lastImportedAt={profile?.linkedin_last_imported_at || null}
         />
+
+        {/* Notion Sync */}
+        <NotionSettings />
+
+        {/* Notion Conflicts */}
+        <NotionConflicts />
 
         {/* Profile Card */}
         <Card>

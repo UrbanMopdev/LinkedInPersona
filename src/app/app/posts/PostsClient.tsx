@@ -23,6 +23,10 @@ import {
   AlertCircle,
   PenLine,
   Clock,
+  RefreshCw,
+  AlertTriangle,
+  Database,
+  Loader2,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -40,6 +44,10 @@ interface Post {
   published_at: string | null;
   linkedin_post_id: string | null;
   linkedin_url: string | null;
+  notion_page_id: string | null;
+  sync_status: string | null;
+  source_of_truth: string | null;
+  notion_last_synced_at: string | null;
   created_at: string;
   updated_at: string;
   ideas: { title: string } | null;
@@ -265,6 +273,40 @@ function PostCard({
   onMarkPosted: (id: string) => void;
 }) {
   const isExpanded = expandedVersions === post.id;
+  const [pushing, setPushing] = useState(false);
+
+  async function handlePushToNotion() {
+    setPushing(true);
+    try {
+      const res = await fetch("/api/notion/push", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ post_id: post.id }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error);
+      }
+      window.location.reload();
+    } catch {
+      // ignore — user can retry
+    } finally {
+      setPushing(false);
+    }
+  }
+
+  const syncBadgeVariant = (syncStatus: string | null) => {
+    switch (syncStatus) {
+      case "conflict":
+        return "warning" as const;
+      case "error":
+        return "destructive" as const;
+      case "pending":
+        return "secondary" as const;
+      default:
+        return null;
+    }
+  };
 
   return (
     <Card>
@@ -272,8 +314,22 @@ function PostCard({
         {/* Header */}
         <div className="flex items-start justify-between gap-4 mb-3">
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 mb-1">
+            <div className="flex items-center gap-2 mb-1 flex-wrap">
               <Badge variant={statusBadge(post.status)}>{post.status}</Badge>
+              {post.notion_page_id && (
+                <Badge variant="outline" className="gap-1">
+                  <Database className="h-3 w-3" />
+                  Notion
+                </Badge>
+              )}
+              {post.sync_status && syncBadgeVariant(post.sync_status) && (
+                <Badge variant={syncBadgeVariant(post.sync_status)!}>
+                  {post.sync_status === "conflict" && (
+                    <AlertTriangle className="h-3 w-3 mr-1" />
+                  )}
+                  {post.sync_status}
+                </Badge>
+              )}
               {post.ideas?.title && (
                 <span className="text-xs text-muted-foreground">
                   From: {post.ideas.title}
@@ -344,6 +400,37 @@ function PostCard({
               </Button>
             </div>
           </>
+        )}
+
+        {/* Notion sync info */}
+        {post.notion_page_id && post.notion_last_synced_at && (
+          <p className="text-xs text-muted-foreground mb-2">
+            <Database className="h-3 w-3 inline mr-1" />
+            Last synced {new Date(post.notion_last_synced_at).toLocaleString()}
+            {post.source_of_truth && post.source_of_truth !== "app" && (
+              <span className="ml-2">
+                Source: {post.source_of_truth}
+              </span>
+            )}
+          </p>
+        )}
+
+        {/* Push to Notion button */}
+        {!post.notion_page_id && post.sync_status !== "synced" && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="mb-3"
+            onClick={handlePushToNotion}
+            disabled={pushing}
+          >
+            {pushing ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
+            ) : (
+              <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+            )}
+            Push to Notion
+          </Button>
         )}
 
         {/* Version history */}
