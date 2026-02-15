@@ -1,9 +1,8 @@
 /**
- * LinkedIn profile data fetcher.
+ * LinkedIn profile parser — works on plain text that users copy-paste
+ * directly from their LinkedIn profile page (Select All → Copy → Paste).
  *
- * Primary strategy: Proxycurl API (reliable, requires API key).
- * Fallback: direct HTML fetch (rarely works — LinkedIn blocks most
- * server-side requests with auth walls).
+ * No scraping, no API keys, no cost. Users own their data.
  */
 
 /* ------------------------------------------------------------------ */
@@ -17,460 +16,577 @@ export interface LinkedInExperience {
   description: string;
 }
 
-export interface LinkedInParseResult {
+export interface LinkedInEducation {
+  school: string;
+  degree: string;
+  years: string;
+}
+
+export interface LinkedInPost {
+  content: string;
+  reactions: number;
+  comments: number;
+}
+
+export interface LinkedInProfileData {
+  name: string | null;
   headline: string | null;
+  location: string | null;
   about: string | null;
   experience: LinkedInExperience[];
-  posts: string[];
+  education: LinkedInEducation[];
+  posts: LinkedInPost[];
+  rawPostTexts: string[];
 }
 
 /* ------------------------------------------------------------------ */
-/*  URL helpers                                                        */
+/*  Section splitting                                                  */
 /* ------------------------------------------------------------------ */
 
 /**
- * Normalize a handle or URL to a canonical LinkedIn profile URL.
- * Accepts:
- *   - "johndoe"
- *   - "@johndoe"
- *   - "https://www.linkedin.com/in/johndoe"
- *   - "linkedin.com/in/johndoe/"
+ * LinkedIn's copy-paste output uses recognisable section headings.
+ * We split on these to isolate each block of content.
  */
-export function normalizeLinkedInUrl(input: string): string {
-  const trimmed = input.trim();
+const SECTION_HEADINGS = [
+  "About",
+  "Activity",
+  "Experience",
+  "Education",
+  "Licenses & certifications",
+  "Skills",
+  "Recommendations",
+  "Courses",
+  "Projects",
+  "Honors & awards",
+  "Publications",
+  "Languages",
+  "Volunteer experience",
+  "Interests",
+  "Organizations",
+];
 
-  // Already a full URL
-  if (/^https?:\/\//i.test(trimmed)) {
-    const url = new URL(trimmed);
-    // Ensure path starts with /in/
-    const path = url.pathname.replace(/\/+$/, "");
-    if (path.startsWith("/in/")) {
-      const handle = path.replace(/^\/in\//, "").split("/")[0];
-      return `https://www.linkedin.com/in/${handle}`;
-    }
-    // Might be a full profile URL without /in/, try extracting last segment
-    const segments = path.split("/").filter(Boolean);
-    const handle = segments[segments.length - 1];
-    return `https://www.linkedin.com/in/${handle}`;
-  }
-
-  // Bare domain prefix
-  if (/^(www\.)?linkedin\.com/i.test(trimmed)) {
-    return normalizeLinkedInUrl("https://" + trimmed);
-  }
-
-  // Just a handle (strip leading @)
-  const handle = trimmed.replace(/^@/, "").split("/")[0];
-  return `https://www.linkedin.com/in/${handle}`;
-}
-
-/**
- * Extract the handle from a canonical LinkedIn URL.
- */
-export function extractHandle(canonicalUrl: string): string {
-  return canonicalUrl.replace("https://www.linkedin.com/in/", "");
-}
-
-/* ------------------------------------------------------------------ */
-/*  Proxycurl API (primary strategy)                                   */
-/* ------------------------------------------------------------------ */
-
-/**
- * Fetch profile data via the Proxycurl API.
- * Requires PROXYCURL_API_KEY env var.
- * Returns null if the key is missing or the request fails.
- *
- * API docs: https://nubela.co/proxycurl/docs#people-api-person-profile-endpoint
- */
-export async function fetchViaProxycurl(
-  canonicalUrl: string,
-): Promise<LinkedInParseResult | null> {
-  const apiKey = process.env.PROXYCURL_API_KEY;
-  if (!apiKey) return null;
-
-  const params = new URLSearchParams({
-    linkedin_profile_url: canonicalUrl,
-    use_cache: "if-recent",
-    fallback_to_cache: "on-error",
-  });
-
-  const res = await fetch(
-    `https://nubela.co/proxycurl/api/v2/linkedin?${params}`,
-    {
-      headers: { Authorization: `Bearer ${apiKey}` },
-    },
+/** Build a regex that matches section headings on their own line. */
+function sectionSplitRegex(): RegExp {
+  const escaped = SECTION_HEADINGS.map((h) =>
+    h.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
   );
+  // Match heading on its own line (possibly with whitespace around it)
+  return new RegExp(`^\\s*(${escaped.join("|")})\\s*$`, "mi");
+}
 
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(
-      `Proxycurl returned ${res.status}: ${body.slice(0, 200)}`,
-    );
-  }
+interface Section {
+  heading: string;
+  body: string;
+}
 
-  const data = await res.json();
+function splitIntoSections(text: string): {
+  header: string;
+  sections: Section[];
+} {
+  const regex = sectionSplitRegex();
+  const lines = text.split("\n");
+  const sections: Section[] = [];
+  let headerLines: string[] = [];
+  let currentHeading: string | null = null;
+  let currentBody: string[] = [];
+  let foundFirst = false;
 
-  // Map Proxycurl response → our standard shape
-  const headline: string | null = data.headline || data.occupation || null;
-  const about: string | null = data.summary || null;
-
-  const experience: LinkedInExperience[] = [];
-  if (Array.isArray(data.experiences)) {
-    for (const exp of data.experiences) {
-      const startDate = exp.starts_at
-        ? `${exp.starts_at.month || ""}/${exp.starts_at.year || ""}`
-        : "";
-      const endDate = exp.ends_at
-        ? `${exp.ends_at.month || ""}/${exp.ends_at.year || ""}`
-        : "Present";
-      experience.push({
-        title: exp.title || "",
-        company: exp.company || "",
-        duration: startDate ? `${startDate} – ${endDate}` : "",
-        description: exp.description || "",
-      });
+  for (const line of lines) {
+    const match = line.match(regex);
+    if (match) {
+      if (currentHeading) {
+        sections.push({
+          heading: currentHeading,
+          body: currentBody.join("\n").trim(),
+        });
+      } else if (!foundFirst) {
+        headerLines = [...currentBody];
+      }
+      currentHeading = match[1].trim();
+      currentBody = [];
+      foundFirst = true;
+    } else {
+      currentBody.push(line);
     }
   }
+  // Push last section
+  if (currentHeading) {
+    sections.push({
+      heading: currentHeading,
+      body: currentBody.join("\n").trim(),
+    });
+  }
+  if (!foundFirst) {
+    headerLines = currentBody;
+  }
 
-  // Proxycurl doesn't return post content in the person-profile endpoint
-  const posts: string[] = [];
-
-  return { headline, about, experience, posts };
+  return { header: headerLines.join("\n").trim(), sections };
 }
 
 /* ------------------------------------------------------------------ */
 /*  Text cleaning                                                      */
 /* ------------------------------------------------------------------ */
 
-/**
- * Remove UI boilerplate, collapse whitespace, normalise paragraphs.
- */
 export function cleanText(raw: string): string {
+  return raw
+    .replace(/…see more/gi, "")
+    .replace(/…?see less/gi, "")
+    .replace(
+      /Show \d+ more (experience|education|skill|certification)s?/gi,
+      "",
+    )
+    .replace(/Like\s*Comment\s*Repost\s*Send/gi, "")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+/** Strip lines that are pure LinkedIn UI chrome. */
+function isUiNoise(line: string): boolean {
+  const l = line.trim().toLowerCase();
   return (
-    raw
-      // Strip common LinkedIn UI artefacts
-      .replace(/…see more/gi, "")
-      .replace(/…?see less/gi, "")
-      .replace(/Show \d+ more (experience|education|skill|certification)s?/gi, "")
-      .replace(/\d+ reactions?/gi, "")
-      .replace(/\d+ comments?/gi, "")
-      .replace(/\d+ reposts?/gi, "")
-      .replace(/Like\s*Comment\s*Repost\s*Send/gi, "")
-      // Collapse whitespace but preserve paragraph breaks
-      .replace(/[ \t]+/g, " ")
-      .replace(/\n{3,}/g, "\n\n")
-      .trim()
+    l === "" ||
+    l === "skip to main content" ||
+    l === "linkedin" ||
+    l === "search" ||
+    l === "messaging" ||
+    l === "notifications" ||
+    /^(home|my network|jobs|messaging|notifications|me|for business|post)$/i.test(l) ||
+    /^\d+\s*(new\s*)?(notification|message)s?$/i.test(l) ||
+    l === "open to" ||
+    l === "show all" ||
+    l === "more" ||
+    l === "contact info" ||
+    l === "see all activity" ||
+    l === "connect" ||
+    l === "follow" ||
+    l === "message" ||
+    /^see (all|more) \d+/i.test(l) ||
+    /^show all \d+/i.test(l) ||
+    l === "people also viewed" ||
+    l === "people you may know"
   );
 }
 
 /* ------------------------------------------------------------------ */
-/*  HTML fetching                                                      */
+/*  Header parser (name, headline, location)                           */
 /* ------------------------------------------------------------------ */
 
-const REALISTIC_HEADERS: Record<string, string> = {
-  "User-Agent":
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-  Accept:
-    "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-  "Accept-Language": "en-US,en;q=0.9",
-  "Accept-Encoding": "gzip, deflate, br",
-  "Cache-Control": "no-cache",
-  Pragma: "no-cache",
-  "Sec-Fetch-Dest": "document",
-  "Sec-Fetch-Mode": "navigate",
-  "Sec-Fetch-Site": "none",
-  "Sec-Fetch-User": "?1",
-  "Upgrade-Insecure-Requests": "1",
-};
+function parseHeader(header: string): {
+  name: string | null;
+  headline: string | null;
+  location: string | null;
+} {
+  const lines = header
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => !isUiNoise(l));
 
-export async function fetchLinkedInHtml(
-  canonicalUrl: string,
-): Promise<string> {
-  const res = await fetch(canonicalUrl, {
-    headers: REALISTIC_HEADERS,
-    redirect: "follow",
-  });
+  let name: string | null = null;
+  let headline: string | null = null;
+  let location: string | null = null;
 
-  if (!res.ok) {
-    throw new Error(
-      `LinkedIn returned ${res.status}. The profile may be private or the URL incorrect.`,
-    );
-  }
+  // After filtering noise, the first meaningful line is typically the name.
+  // The next line (that doesn't look like a connection count or location) is the headline.
+  // Location often contains a comma or "Area" or known patterns.
+  for (let i = 0; i < lines.length && i < 15; i++) {
+    const line = lines[i];
+    if (!line) continue;
 
-  const html = await res.text();
+    // Skip connection counts
+    if (/^\d+\+?\s*connections?$/i.test(line)) continue;
+    if (/^\d+\+?\s*followers?$/i.test(line)) continue;
+    if (/^(1st|2nd|3rd)\s*degree/i.test(line)) continue;
 
-  // Detect auth wall — LinkedIn returns 200 with a login page
-  if (isAuthWall(html)) {
-    throw new Error(
-      "LinkedIn returned an auth wall instead of profile data. " +
-        "Direct HTML fetching is blocked. Use Proxycurl API or paste profile data manually.",
-    );
-  }
-
-  return html;
-}
-
-/**
- * Check if the returned HTML is an auth wall / login page
- * rather than actual profile data.
- */
-function isAuthWall(html: string): boolean {
-  const markers = [
-    "sign in",
-    "authwall",
-    "auth_wall",
-    "login-form",
-    "join now",
-    'action="/uas/login',
-    "uas/login-submit",
-    "session_redirect",
-  ];
-  const lower = html.toLowerCase();
-  // If the page has multiple auth markers and no JSON-LD Person data, it's an auth wall
-  const authHits = markers.filter((m) => lower.includes(m)).length;
-  const hasJsonLd =
-    lower.includes('"@type":"person"') ||
-    lower.includes('"@type": "person"');
-  return authHits >= 2 && !hasJsonLd;
-}
-
-/* ------------------------------------------------------------------ */
-/*  HTML parsing                                                       */
-/* ------------------------------------------------------------------ */
-
-/**
- * Extract a meta tag value by name or property attribute.
- */
-function metaContent(html: string, attr: string): string | null {
-  // Try name="attr" and property="attr"
-  for (const key of ["name", "property"]) {
-    const re = new RegExp(
-      `<meta\\s[^>]*${key}=["']${attr}["'][^>]*content=["']([^"']+)["']`,
-      "i",
-    );
-    const m = html.match(re);
-    if (m) return cleanText(decodeHtmlEntities(m[1]));
-
-    // Also try content first, then name/property
-    const re2 = new RegExp(
-      `<meta\\s[^>]*content=["']([^"']+)["'][^>]*${key}=["']${attr}["']`,
-      "i",
-    );
-    const m2 = html.match(re2);
-    if (m2) return cleanText(decodeHtmlEntities(m2[1]));
-  }
-  return null;
-}
-
-function decodeHtmlEntities(text: string): string {
-  return text
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&#x27;/g, "'")
-    .replace(/&#x2F;/g, "/");
-}
-
-/**
- * Try to extract JSON-LD data from the page.
- */
-function extractJsonLd(html: string): Record<string, unknown> | null {
-  const re =
-    /<script\s+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
-  let match;
-  while ((match = re.exec(html)) !== null) {
-    try {
-      const data = JSON.parse(match[1]);
-      // LinkedIn JSON-LD is usually a Person or array
-      if (data["@type"] === "Person" || data["@type"] === "ProfilePage") {
-        return data as Record<string, unknown>;
+    if (!name) {
+      // Name is usually 2-5 words, no special characters
+      if (
+        line.length > 1 &&
+        line.length < 80 &&
+        !line.includes("|") &&
+        !line.includes("·")
+      ) {
+        name = line;
+        continue;
       }
-      if (Array.isArray(data)) {
-        const person = data.find(
-          (d: Record<string, unknown>) =>
-            d["@type"] === "Person" || d["@type"] === "ProfilePage",
-        );
-        if (person) return person as Record<string, unknown>;
+    }
+
+    if (!headline) {
+      // Headline is usually longer, may contain | or special chars
+      if (line.length > 3 && line.length < 300) {
+        headline = line;
+        continue;
       }
-    } catch {
+    }
+
+    if (!location) {
+      // Location patterns: "City, State" or "City, Country" or "X Area"
+      if (
+        /,/.test(line) &&
+        line.length < 100 &&
+        !/^\d/.test(line) &&
+        !line.includes("|")
+      ) {
+        location = line.replace(/\s*·\s*Contact info.*$/i, "").trim();
+        break;
+      }
+      if (/area$/i.test(line)) {
+        location = line;
+        break;
+      }
+    }
+  }
+
+  return { name, headline, location };
+}
+
+/* ------------------------------------------------------------------ */
+/*  About parser                                                       */
+/* ------------------------------------------------------------------ */
+
+function parseAbout(body: string): string | null {
+  const cleaned = cleanText(body);
+  if (cleaned.length < 5) return null;
+  return cleaned;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Experience parser                                                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * LinkedIn experience copy-paste typically looks like:
+ *
+ *   VP of Marketing
+ *   Acme Corp · Full-time
+ *   Jan 2020 - Present · 4 yrs 2 mos
+ *   San Francisco, California, United States
+ *
+ *   Did X, Y, Z...
+ *
+ * Or for grouped roles under one company:
+ *
+ *   Acme Corp
+ *   6 yrs
+ *   VP of Marketing
+ *   Jan 2020 - Present · 4 yrs
+ *   Senior Manager
+ *   Jun 2017 - Dec 2019 · 2 yrs
+ */
+
+const DATE_RANGE_RE =
+  /^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\s+\d{4}\s*[-–]\s*(present|(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\s+\d{4})/i;
+const DURATION_RE = /·?\s*\d+\s*(yr|mo|year|month)s?/i;
+const EMPLOYMENT_TYPE_RE =
+  /·\s*(Full-time|Part-time|Contract|Freelance|Self-employed|Internship|Seasonal|Apprenticeship)/i;
+
+function parseExperienceSection(body: string): LinkedInExperience[] {
+  const experiences: LinkedInExperience[] = [];
+  const lines = body
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // Skip UI noise
+    if (isUiNoise(line) || /^logo$/i.test(line) || /^show all/i.test(line)) {
+      i++;
       continue;
     }
-  }
-  return null;
-}
 
-/**
- * Extract experience entries from HTML.
- */
-function parseExperience(html: string): LinkedInExperience[] {
-  const experiences: LinkedInExperience[] = [];
+    // Try to detect if this line is a role title (next line might be company)
+    // or a company name (next lines are grouped roles)
+    const nextLine = i + 1 < lines.length ? lines[i + 1] : "";
+    const lineAfter = i + 2 < lines.length ? lines[i + 2] : "";
 
-  // Strategy: Look for experience section in common LinkedIn patterns
-  // LinkedIn public profiles often have structured sections with class-based markers
+    // Pattern: Title on one line, Company · Employment type on next
+    if (
+      EMPLOYMENT_TYPE_RE.test(nextLine) ||
+      (nextLine && !DATE_RANGE_RE.test(line) && DATE_RANGE_RE.test(lineAfter))
+    ) {
+      const title = line;
+      const company = nextLine
+        .replace(EMPLOYMENT_TYPE_RE, "")
+        .replace(/·\s*$/, "")
+        .trim();
+      i += 2;
 
-  // Try JSON-LD first
-  const jsonLd = extractJsonLd(html);
-  if (jsonLd) {
-    const workItems = (jsonLd.worksFor ||
-      jsonLd.alumniOf ||
-      jsonLd.memberOf) as
-      | Array<Record<string, unknown>>
-      | undefined;
-    if (Array.isArray(workItems)) {
-      for (const item of workItems) {
-        experiences.push({
-          title: String(item.jobTitle || item.roleName || ""),
-          company: String(
-            item.name ||
-              (item.organization as Record<string, unknown>)?.name ||
-              "",
-          ),
-          duration: String(item.description || ""),
-          description: "",
-        });
+      // Pick up duration line
+      let duration = "";
+      if (i < lines.length && DATE_RANGE_RE.test(lines[i])) {
+        duration = lines[i].replace(DURATION_RE, "").trim();
+        const durMatch = lines[i].match(DURATION_RE);
+        if (durMatch) duration = lines[i].trim();
+        i++;
       }
-    }
-  }
 
-  // Fallback: regex-based extraction from section content
-  if (experiences.length === 0) {
-    // Look for experience section patterns
-    const expSectionRe =
-      /experience[\s\S]*?<\/section>/gi;
-    const sectionMatch = html.match(expSectionRe);
-    if (sectionMatch) {
-      const section = sectionMatch[0];
-      // Extract individual role blocks - look for h3/h4 tags with titles
-      const roleRe =
-        /<h3[^>]*>([\s\S]*?)<\/h3>[\s\S]*?<h4[^>]*>([\s\S]*?)<\/h4>/gi;
-      let roleMatch;
-      while ((roleMatch = roleRe.exec(section)) !== null) {
-        const title = cleanText(stripTags(roleMatch[1]));
-        const company = cleanText(stripTags(roleMatch[2]));
-        if (title || company) {
-          experiences.push({ title, company, duration: "", description: "" });
+      // Skip location line
+      if (
+        i < lines.length &&
+        /,/.test(lines[i]) &&
+        lines[i].length < 80 &&
+        !DATE_RANGE_RE.test(lines[i])
+      ) {
+        i++;
+      }
+
+      // Pick up description lines until next role or section noise
+      let description = "";
+      const descLines: string[] = [];
+      while (i < lines.length) {
+        const dl = lines[i];
+        if (
+          isUiNoise(dl) ||
+          EMPLOYMENT_TYPE_RE.test(dl) ||
+          /^logo$/i.test(dl) ||
+          /^show all/i.test(dl)
+        ) {
+          break;
         }
+        // Check if this looks like a new role title
+        // (next line has employment type or date range)
+        const peekNext = i + 1 < lines.length ? lines[i + 1] : "";
+        const peekAfter = i + 2 < lines.length ? lines[i + 2] : "";
+        if (
+          EMPLOYMENT_TYPE_RE.test(peekNext) ||
+          (peekNext &&
+            !DATE_RANGE_RE.test(dl) &&
+            DATE_RANGE_RE.test(peekAfter))
+        ) {
+          break;
+        }
+        if (DATE_RANGE_RE.test(dl)) break;
+        descLines.push(dl);
+        i++;
       }
+      description = descLines.join("\n").trim();
+
+      experiences.push({
+        title,
+        company,
+        duration,
+        description: cleanText(description),
+      });
+      continue;
     }
+
+    // Fallback: skip unrecognised lines
+    i++;
   }
 
   return experiences;
 }
 
-function stripTags(html: string): string {
-  return html.replace(/<[^>]+>/g, "");
-}
+/* ------------------------------------------------------------------ */
+/*  Education parser                                                   */
+/* ------------------------------------------------------------------ */
 
-/**
- * Extract post texts from profile HTML.
- * LinkedIn public profiles may show recent activity/posts.
- */
-function parsePosts(html: string): string[] {
-  const posts: string[] = [];
-  const seen = new Set<string>();
+function parseEducationSection(body: string): LinkedInEducation[] {
+  const education: LinkedInEducation[] = [];
+  const lines = body
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0 && !isUiNoise(l) && !/^logo$/i.test(l));
 
-  // Look for post content in various patterns LinkedIn uses
-  // Pattern 1: data-urn based post containers
-  const postContentRe =
-    /<div[^>]*class="[^"]*feed-shared-text[^"]*"[^>]*>([\s\S]*?)<\/div>/gi;
-  let match;
-  while ((match = postContentRe.exec(html)) !== null) {
-    const text = cleanText(stripTags(match[1]));
-    if (text.length > 30 && !seen.has(text)) {
-      seen.add(text);
-      posts.push(text);
+  let i = 0;
+  while (i < lines.length) {
+    const school = lines[i];
+    i++;
+
+    let degree = "";
+    let years = "";
+
+    // Next line might be degree
+    if (i < lines.length && !/^\d{4}/.test(lines[i])) {
+      degree = lines[i];
+      i++;
     }
-  }
 
-  // Pattern 2: article or share-update containers
-  const shareRe =
-    /<div[^>]*class="[^"]*update-components-text[^"]*"[^>]*>([\s\S]*?)<\/div>/gi;
-  while ((match = shareRe.exec(html)) !== null) {
-    const text = cleanText(stripTags(match[1]));
-    if (text.length > 30 && !seen.has(text)) {
-      seen.add(text);
-      posts.push(text);
+    // Next line might be year range
+    if (i < lines.length && /\d{4}/.test(lines[i])) {
+      years = lines[i];
+      i++;
     }
-  }
 
-  // Pattern 3: generic activity section content blocks
-  const activityRe =
-    /<span[^>]*class="[^"]*break-words[^"]*"[^>]*>([\s\S]*?)<\/span>/gi;
-  while ((match = activityRe.exec(html)) !== null) {
-    const text = cleanText(stripTags(match[1]));
-    // Only take substantial text blocks that look like posts
-    if (
-      text.length > 80 &&
-      !seen.has(text) &&
-      !text.includes("Sign in") &&
-      !text.includes("Join now")
+    // Skip activity/description lines
+    while (
+      i < lines.length &&
+      !isUiNoise(lines[i]) &&
+      !/^[A-Z]/.test(lines[i])
     ) {
-      seen.add(text);
-      posts.push(text);
+      i++;
+    }
+
+    if (school && school.length < 200) {
+      education.push({ school, degree, years });
     }
   }
 
-  // Cap at 30 posts
-  return posts.slice(0, 30);
+  return education;
 }
 
-/**
- * Main parse function — orchestrates all extraction strategies.
- */
-export function parseLinkedInHtml(html: string): LinkedInParseResult {
-  // --- Headline ---
-  let headline =
-    metaContent(html, "og:title") ||
-    metaContent(html, "twitter:title") ||
-    null;
+/* ------------------------------------------------------------------ */
+/*  Posts parser (from pasted activity page)                           */
+/* ------------------------------------------------------------------ */
 
-  // JSON-LD may have better headline
-  const jsonLd = extractJsonLd(html);
-  if (jsonLd) {
-    const jlHeadline =
-      (jsonLd.jobTitle as string) || (jsonLd.headline as string);
-    if (jlHeadline) headline = cleanText(jlHeadline);
+const ENGAGEMENT_RE = /^(\d[\d,]*)\s*(reaction|comment|repost|like|view)s?/i;
+const TIMESTAMP_RE =
+  /^\d+\s*(mo|d|h|w|yr|min|hour|day|week|month|year)s?\s*(ago)?$/i;
+
+export function parsePastedPosts(raw: string): LinkedInPost[] {
+  const posts: LinkedInPost[] = [];
+  const lines = raw.split("\n");
+
+  // Strategy: accumulate text lines, then when we hit engagement counts
+  // or a clear break (repeated author name), flush the accumulated post.
+  let accum: string[] = [];
+  let currentReactions = 0;
+  let currentComments = 0;
+
+  function flush() {
+    const text = accum
+      .join("\n")
+      .replace(/…see more/gi, "")
+      .replace(/…?see less/gi, "")
+      .replace(/[ \t]+/g, " ")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+    if (text.length > 20) {
+      posts.push({
+        content: text,
+        reactions: currentReactions,
+        comments: currentComments,
+      });
+    }
+    accum = [];
+    currentReactions = 0;
+    currentComments = 0;
   }
 
-  // Try to extract a more specific headline from profile section
-  const headlineRe =
-    /<div[^>]*class="[^"]*text-body-medium[^"]*"[^>]*>([\s\S]*?)<\/div>/i;
-  const headlineMatch = html.match(headlineRe);
-  if (headlineMatch) {
-    const extracted = cleanText(stripTags(headlineMatch[1]));
-    if (extracted.length > 5 && extracted.length < 300) {
-      headline = extracted;
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+
+    // Skip empty
+    if (!line) continue;
+
+    // Skip obvious UI noise
+    if (isUiNoise(line)) continue;
+    if (/^Like\s*Comment\s*Repost\s*Send$/i.test(line)) continue;
+    if (/^(Like|Comment|Repost|Send|Share|Celebrate|Support|Love|Insightful|Funny)$/i.test(line)) continue;
+    if (TIMESTAMP_RE.test(line)) continue;
+    if (/^(1st|2nd|3rd)\s*degree/i.test(line)) continue;
+    if (/^\d+\+?\s*(follower|connection)s?$/i.test(line)) continue;
+
+    // Check for engagement line
+    const engMatch = line.match(
+      /^(\d[\d,]*)\s*(reaction|like)s?(?:\s*·\s*(\d[\d,]*)\s*(comment)s?)?/i,
+    );
+    if (engMatch) {
+      currentReactions = parseInt(engMatch[1].replace(/,/g, ""), 10);
+      if (engMatch[3]) {
+        currentComments = parseInt(engMatch[3].replace(/,/g, ""), 10);
+      }
+      flush();
+      continue;
+    }
+
+    // Separate engagement line for just comments
+    const commentMatch = line.match(/^(\d[\d,]*)\s*comments?$/i);
+    if (commentMatch) {
+      currentComments = parseInt(commentMatch[1].replace(/,/g, ""), 10);
+      flush();
+      continue;
+    }
+
+    // Detect "Author Name\n1st degree" pattern as a post separator
+    // If next meaningful content starts looking like a new post header, flush
+    if (
+      accum.length > 3 &&
+      line.length < 60 &&
+      !line.includes(".") &&
+      !line.includes(",") &&
+      /^[A-Z][a-z]+ [A-Z]/.test(line)
+    ) {
+      // Looks like a new author name — flush previous post
+      flush();
+      continue;
+    }
+
+    accum.push(line);
+  }
+
+  // Flush any remaining content
+  flush();
+
+  return posts.slice(0, 50);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Main parser: pasted profile text                                   */
+/* ------------------------------------------------------------------ */
+
+export function parseLinkedInPastedProfile(raw: string): LinkedInProfileData {
+  const { header, sections } = splitIntoSections(raw);
+  const { name, headline, location } = parseHeader(header);
+
+  let about: string | null = null;
+  let experience: LinkedInExperience[] = [];
+  let education: LinkedInEducation[] = [];
+  const posts: LinkedInPost[] = [];
+  const rawPostTexts: string[] = [];
+
+  for (const section of sections) {
+    const h = section.heading.toLowerCase();
+
+    if (h === "about") {
+      about = parseAbout(section.body);
+    } else if (h === "experience") {
+      experience = parseExperienceSection(section.body);
+    } else if (h === "education") {
+      education = parseEducationSection(section.body);
+    } else if (h === "activity") {
+      // Activity section on profile page may have a few recent posts
+      const activityPosts = parsePastedPosts(section.body);
+      posts.push(...activityPosts);
+      rawPostTexts.push(...activityPosts.map((p) => p.content));
     }
   }
 
-  // --- About / Summary ---
-  let about =
-    metaContent(html, "og:description") ||
-    metaContent(html, "description") ||
-    null;
+  return {
+    name,
+    headline,
+    location,
+    about,
+    experience,
+    education,
+    posts,
+    rawPostTexts,
+  };
+}
 
-  if (jsonLd && jsonLd.description) {
-    about = cleanText(String(jsonLd.description));
-  }
+/* ------------------------------------------------------------------ */
+/*  URL helpers (kept for profile link storage)                        */
+/* ------------------------------------------------------------------ */
 
-  // Try to extract a longer about section
-  const aboutRe =
-    /about[\s\S]*?<div[^>]*class="[^"]*inline-show-more-text[^"]*"[^>]*>([\s\S]*?)<\/div>/i;
-  const aboutMatch = html.match(aboutRe);
-  if (aboutMatch) {
-    const extracted = cleanText(stripTags(aboutMatch[1]));
-    if (extracted.length > (about?.length || 0)) {
-      about = extracted;
+export function normalizeLinkedInUrl(input: string): string {
+  const trimmed = input.trim();
+  if (/^https?:\/\//i.test(trimmed)) {
+    const url = new URL(trimmed);
+    const path = url.pathname.replace(/\/+$/, "");
+    if (path.startsWith("/in/")) {
+      const handle = path.replace(/^\/in\//, "").split("/")[0];
+      return `https://www.linkedin.com/in/${handle}`;
     }
+    const segments = path.split("/").filter(Boolean);
+    const handle = segments[segments.length - 1];
+    return `https://www.linkedin.com/in/${handle}`;
   }
-
-  // --- Experience ---
-  const experience = parseExperience(html);
-
-  // --- Posts ---
-  const posts = parsePosts(html);
-
-  return { headline, about, experience, posts };
+  if (/^(www\.)?linkedin\.com/i.test(trimmed)) {
+    return normalizeLinkedInUrl("https://" + trimmed);
+  }
+  const handle = trimmed.replace(/^@/, "").split("/")[0];
+  return `https://www.linkedin.com/in/${handle}`;
 }

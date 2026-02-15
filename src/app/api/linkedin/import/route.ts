@@ -4,9 +4,8 @@ import { createClient } from "@/lib/supabase/server";
 import { generateEmbedding } from "@/lib/embeddings";
 import {
   normalizeLinkedInUrl,
-  fetchViaProxycurl,
-  fetchLinkedInHtml,
-  parseLinkedInHtml,
+  parseLinkedInPastedProfile,
+  parsePastedPosts,
   cleanText,
   type LinkedInExperience,
 } from "@/lib/linkedin-parser";
@@ -32,117 +31,58 @@ export async function POST(req: Request) {
   }
 
   const body = await req.json();
-  const { input, pastedPosts, manualProfile } = body as {
-    input?: string;
-    pastedPosts?: string[];
-    manualProfile?: {
-      headline?: string;
-      about?: string;
-      experience?: string;
-    };
+  const {
+    profileUrl,
+    pastedProfile,
+    pastedPosts,
+  } = body as {
+    profileUrl?: string;
+    pastedProfile?: string;
+    pastedPosts?: string;
   };
 
-  if (
-    !input &&
-    (!pastedPosts || pastedPosts.length === 0) &&
-    !manualProfile
-  ) {
+  if (!pastedProfile && !pastedPosts) {
     return Response.json(
-      { error: "Provide a LinkedIn handle/URL, pasted posts, or profile info." },
+      { error: "Paste your LinkedIn profile or posts to import." },
       { status: 400 },
     );
   }
 
   try {
+    let name: string | null = null;
     let headline: string | null = null;
     let about: string | null = null;
     let experience: LinkedInExperience[] = [];
     let postTexts: string[] = [];
     let canonicalUrl: string | null = null;
 
-    /* ============================================================ */
-    /*  Strategy A: Proxycurl API (primary)                          */
-    /* ============================================================ */
-    if (input) {
-      canonicalUrl = normalizeLinkedInUrl(input);
-
-      // Try Proxycurl first (reliable when API key is configured)
-      try {
-        const proxycurlResult = await fetchViaProxycurl(canonicalUrl);
-        if (proxycurlResult) {
-          headline = proxycurlResult.headline;
-          about = proxycurlResult.about;
-          experience = proxycurlResult.experience;
-          postTexts = proxycurlResult.posts;
-        }
-      } catch {
-        // Proxycurl failed — fall through to direct fetch
-      }
-
-      // Fallback: direct HTML fetch (often blocked by LinkedIn auth wall)
-      if (!headline && !about && experience.length === 0) {
-        try {
-          const html = await fetchLinkedInHtml(canonicalUrl);
-          const parsed = parseLinkedInHtml(html);
-          headline = parsed.headline;
-          about = parsed.about;
-          experience = parsed.experience;
-          postTexts = parsed.posts;
-        } catch {
-          // Direct fetch also failed — will still work with pastedPosts / manualProfile
-        }
-      }
+    if (profileUrl?.trim()) {
+      canonicalUrl = normalizeLinkedInUrl(profileUrl);
     }
 
     /* ============================================================ */
-    /*  Strategy B: Merge in pasted posts (fallback or supplement)   */
+    /*  Parse pasted profile text                                    */
     /* ============================================================ */
-    if (pastedPosts && pastedPosts.length > 0) {
-      const cleaned = pastedPosts
-        .map((p) => cleanText(p))
-        .filter((p) => p.length > 20);
-      // Deduplicate against already-parsed posts
+    if (pastedProfile?.trim()) {
+      const parsed = parseLinkedInPastedProfile(pastedProfile);
+      name = parsed.name;
+      headline = parsed.headline;
+      about = parsed.about;
+      experience = parsed.experience;
+      // Activity posts from the profile page
+      postTexts = parsed.rawPostTexts;
+    }
+
+    /* ============================================================ */
+    /*  Parse pasted posts                                           */
+    /* ============================================================ */
+    if (pastedPosts?.trim()) {
+      const parsed = parsePastedPosts(pastedPosts);
       const existingSet = new Set(postTexts);
-      for (const p of cleaned) {
-        if (!existingSet.has(p)) {
-          postTexts.push(p);
-        }
-      }
-    }
-
-    /* ============================================================ */
-    /*  Strategy C: Manual profile entry (fallback)                  */
-    /* ============================================================ */
-    if (manualProfile) {
-      if (manualProfile.headline && !headline) {
-        headline = cleanText(manualProfile.headline);
-      }
-      if (manualProfile.about && !about) {
-        about = cleanText(manualProfile.about);
-      }
-      if (manualProfile.experience && experience.length === 0) {
-        // Parse free-text experience: each line is "Title at Company"
-        const lines = manualProfile.experience
-          .split("\n")
-          .map((l) => l.trim())
-          .filter((l) => l.length > 3);
-        for (const line of lines) {
-          const atMatch = line.match(/^(.+?)\s+at\s+(.+)$/i);
-          if (atMatch) {
-            experience.push({
-              title: atMatch[1].trim(),
-              company: atMatch[2].trim(),
-              duration: "",
-              description: "",
-            });
-          } else {
-            experience.push({
-              title: line,
-              company: "",
-              duration: "",
-              description: "",
-            });
-          }
+      for (const p of parsed) {
+        if (p.content.length > 20 && !existingSet.has(p.content)) {
+          existingSet.add(p.content);
+          postTexts.push(p.content);
         }
       }
     }
@@ -155,6 +95,7 @@ export async function POST(req: Request) {
       linkedin_last_imported_at: new Date().toISOString(),
     };
     if (canonicalUrl) profileUpdate.linkedin_profile_url = canonicalUrl;
+    if (name) profileUpdate.full_name = name;
     if (headline) profileUpdate.linkedin_headline = headline;
     if (about) profileUpdate.linkedin_about = about;
     if (experience.length > 0)
@@ -170,8 +111,8 @@ export async function POST(req: Request) {
     /*  Archive posts + generate embeddings                          */
     /* ============================================================ */
     let archivedCount = 0;
+    let alreadyExisted = 0;
     for (const postText of postTexts) {
-      // Upsert by content match to avoid duplicates
       const { data: existing } = await supabase
         .from("linkedin_posts_archive")
         .select("id")
@@ -188,6 +129,7 @@ export async function POST(req: Request) {
       }
 
       if (existing) {
+        alreadyExisted++;
         await supabase
           .from("linkedin_posts_archive")
           .update({
@@ -261,7 +203,6 @@ export async function POST(req: Request) {
         aiUpdate.positioning_summary = positioningSummary;
       if (voiceFingerprint) {
         aiUpdate.voice_fingerprint = voiceFingerprint;
-        // Also update voice_guide so existing endpoints pick it up
         aiUpdate.voice_guide = voiceFingerprint;
       }
       await supabase.from("profiles").update(aiUpdate).eq("id", user.id);
@@ -314,28 +255,26 @@ export async function POST(req: Request) {
     /* ============================================================ */
     /*  Return preview payload                                       */
     /* ============================================================ */
-    // Determine if the auto-fetch got no data (user should try manual entry)
-    const fetchReturnedNoData =
-      !!input && !headline && !about && experience.length === 0 && postTexts.length === 0;
-
     return Response.json({
       success: true,
       preview: {
         profileUrl: canonicalUrl,
+        name,
         headline,
-        about: about ? about.slice(0, 500) + (about.length > 500 ? "..." : "") : null,
+        about: about
+          ? about.slice(0, 500) + (about.length > 500 ? "..." : "")
+          : null,
         experienceCount: experience.length,
         experience: experience.slice(0, 5),
         postsFound: postTexts.length,
         postsArchived: archivedCount,
-        postsAlreadyExisted: postTexts.length - archivedCount,
+        postsAlreadyExisted: alreadyExisted,
         positioningSummary,
         voiceFingerprint: voiceFingerprint
           ? voiceFingerprint.slice(0, 500) +
             (voiceFingerprint.length > 500 ? "..." : "")
           : null,
         memoryChunksStored: memoryChunks.length,
-        fetchReturnedNoData,
       },
     });
   } catch (e: unknown) {
@@ -372,7 +311,6 @@ function buildAnalysisContent(
   }
 
   if (posts.length > 0) {
-    // Include up to 15 posts for analysis
     const sample = posts.slice(0, 15);
     parts.push(
       "Recent LinkedIn posts:\n" +
