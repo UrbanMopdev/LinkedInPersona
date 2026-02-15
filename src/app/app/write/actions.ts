@@ -114,9 +114,25 @@ export async function updatePostContent(postId: string, content: string) {
 
   const nextVersion = (versions?.[0]?.version_number || 0) + 1;
 
+  // Check if this post is linked to Notion — if so, mark as pending
+  const { data: existingPost } = await supabase
+    .from("posts")
+    .select("notion_page_id")
+    .eq("id", postId)
+    .eq("user_id", user.id)
+    .single();
+
+  const updatePayload: Record<string, unknown> = {
+    content,
+    updated_at: new Date().toISOString(),
+  };
+  if (existingPost?.notion_page_id) {
+    updatePayload.sync_status = "pending";
+  }
+
   const { error: postError } = await supabase
     .from("posts")
-    .update({ content, updated_at: new Date().toISOString() })
+    .update(updatePayload)
     .eq("id", postId)
     .eq("user_id", user.id);
 
@@ -179,31 +195,38 @@ export async function markAsPosted(postId: string, linkedinUrl?: string) {
   } = await supabase.auth.getUser();
   if (!user) throw new Error("Not authenticated");
 
+  // Check if linked to Notion
+  const { data: existingPost } = await supabase
+    .from("posts")
+    .select("notion_page_id, idea_id")
+    .eq("id", postId)
+    .eq("user_id", user.id)
+    .single();
+
+  const updatePayload: Record<string, unknown> = {
+    status: "published",
+    published_at: new Date().toISOString(),
+    linkedin_url: linkedinUrl || null,
+    updated_at: new Date().toISOString(),
+  };
+  if (existingPost?.notion_page_id) {
+    updatePayload.sync_status = "pending";
+  }
+
   const { error } = await supabase
     .from("posts")
-    .update({
-      status: "published",
-      published_at: new Date().toISOString(),
-      linkedin_url: linkedinUrl || null,
-      updated_at: new Date().toISOString(),
-    })
+    .update(updatePayload)
     .eq("id", postId)
     .eq("user_id", user.id);
 
   if (error) throw error;
 
   // Also mark linked idea as published
-  const { data: post } = await supabase
-    .from("posts")
-    .select("idea_id")
-    .eq("id", postId)
-    .single();
-
-  if (post?.idea_id) {
+  if (existingPost?.idea_id) {
     await supabase
       .from("ideas")
       .update({ status: "published", updated_at: new Date().toISOString() })
-      .eq("id", post.idea_id)
+      .eq("id", existingPost.idea_id)
       .eq("user_id", user.id);
   }
 
