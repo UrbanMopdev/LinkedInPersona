@@ -26,6 +26,9 @@ import {
   FileText,
   Sparkles,
   RefreshCw,
+  ArrowRight,
+  ArrowLeft,
+  GraduationCap,
 } from "lucide-react";
 
 /* ------------------------------------------------------------------ */
@@ -34,6 +37,7 @@ import {
 
 interface ImportPreview {
   profileUrl: string | null;
+  name: string | null;
   headline: string | null;
   about: string | null;
   experienceCount: number;
@@ -53,6 +57,12 @@ interface LinkedInImportProps {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Steps                                                              */
+/* ------------------------------------------------------------------ */
+
+type Step = "start" | "profile" | "posts" | "importing" | "preview" | "done";
+
+/* ------------------------------------------------------------------ */
 /*  Component                                                          */
 /* ------------------------------------------------------------------ */
 
@@ -61,38 +71,30 @@ export default function LinkedInImport({
   currentHeadline,
   lastImportedAt,
 }: LinkedInImportProps) {
-  const [input, setInput] = useState(currentProfileUrl || "");
+  const [step, setStep] = useState<Step>(lastImportedAt ? "done" : "start");
+  const [profileUrl, setProfileUrl] = useState(currentProfileUrl || "");
+  const [pastedProfile, setPastedProfile] = useState("");
+  const [pastedPosts, setPastedPosts] = useState("");
   const [isImporting, setIsImporting] = useState(false);
   const [error, setError] = useState("");
   const [preview, setPreview] = useState<ImportPreview | null>(null);
-  const [showPasteFallback, setShowPasteFallback] = useState(false);
-  const [pastedPosts, setPastedPosts] = useState("");
-  const [step, setStep] = useState<
-    "input" | "importing" | "preview" | "done"
-  >(lastImportedAt ? "done" : "input");
   const [showDetails, setShowDetails] = useState(false);
 
-  /* ---- Run import ---- */
-  async function handleImport(usePasted = false) {
+  /* ---- Submit to API ---- */
+  async function handleImport() {
     setError("");
     setIsImporting(true);
     setStep("importing");
-
-    const payload: Record<string, unknown> = {};
-    if (input.trim()) payload.input = input.trim();
-    if (usePasted && pastedPosts.trim()) {
-      // Split by double-newline (post separator)
-      payload.pastedPosts = pastedPosts
-        .split(/\n{2,}/)
-        .map((p) => p.trim())
-        .filter((p) => p.length > 20);
-    }
 
     try {
       const res = await fetch("/api/linkedin/import", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          profileUrl: profileUrl.trim() || undefined,
+          pastedProfile: pastedProfile.trim() || undefined,
+          pastedPosts: pastedPosts.trim() || undefined,
+        }),
       });
       const data = await res.json();
 
@@ -105,29 +107,18 @@ export default function LinkedInImport({
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Import failed";
       setError(msg);
-      setStep("input");
-      // If posts not found, suggest paste fallback
-      if (
-        msg.includes("private") ||
-        msg.includes("403") ||
-        msg.includes("999")
-      ) {
-        setShowPasteFallback(true);
-      }
+      setStep("profile");
     } finally {
       setIsImporting(false);
     }
   }
 
-  function handleConfirm() {
-    setStep("done");
-    setPreview(null);
-  }
-
   function handleReimport() {
-    setStep("input");
+    setStep("start");
     setPreview(null);
     setError("");
+    setPastedProfile("");
+    setPastedPosts("");
   }
 
   /* ================================================================ */
@@ -142,14 +133,24 @@ export default function LinkedInImport({
           Connect LinkedIn
         </CardTitle>
         <CardDescription>
-          Import your public profile and posts to personalise your AI
-          ghostwriter with your authentic voice.
+          Import your profile and posts to personalise your AI ghostwriter. Just
+          copy &amp; paste — no API keys, no permissions needed.
         </CardDescription>
       </CardHeader>
       <CardContent>
-        {/* ---- Status banner when already imported ---- */}
+        {/* ---- Error banner ---- */}
+        {error && (
+          <div className="flex items-center gap-2 rounded-lg bg-destructive/10 border border-destructive/20 px-4 py-3 text-sm text-destructive mb-4">
+            <AlertCircle className="h-4 w-4 shrink-0" />
+            {error}
+          </div>
+        )}
+
+        {/* ========================================================= */}
+        {/*  DONE STATE                                                 */}
+        {/* ========================================================= */}
         {step === "done" && (
-          <div className="flex items-center gap-3 rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3 mb-4">
+          <div className="flex items-center gap-3 rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3">
             <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium text-emerald-800">
@@ -167,43 +168,152 @@ export default function LinkedInImport({
                 </p>
               )}
             </div>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleReimport}
-            >
+            <Button variant="outline" size="sm" onClick={handleReimport}>
               <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
               Re-import
             </Button>
           </div>
         )}
 
-        {/* ---- Error ---- */}
-        {error && (
-          <div className="flex items-center gap-2 rounded-lg bg-destructive/10 border border-destructive/20 px-4 py-3 text-sm text-destructive mb-4">
-            <AlertCircle className="h-4 w-4 shrink-0" />
-            {error}
+        {/* ========================================================= */}
+        {/*  START — choose to begin                                    */}
+        {/* ========================================================= */}
+        {step === "start" && (
+          <div className="space-y-4">
+            <div className="rounded-lg border bg-muted/30 p-4 space-y-3">
+              <p className="text-sm font-medium">How it works</p>
+              <div className="grid gap-2 text-sm text-muted-foreground">
+                <div className="flex items-start gap-2">
+                  <span className="rounded-full bg-primary/10 text-primary text-xs font-bold w-5 h-5 flex items-center justify-center shrink-0 mt-0.5">
+                    1
+                  </span>
+                  <span>
+                    Open your LinkedIn profile → <kbd className="px-1 py-0.5 bg-muted rounded text-xs font-mono">Ctrl+A</kbd> to select all → <kbd className="px-1 py-0.5 bg-muted rounded text-xs font-mono">Ctrl+C</kbd> to copy → paste here
+                  </span>
+                </div>
+                <div className="flex items-start gap-2">
+                  <span className="rounded-full bg-primary/10 text-primary text-xs font-bold w-5 h-5 flex items-center justify-center shrink-0 mt-0.5">
+                    2
+                  </span>
+                  <span>
+                    (Optional) Do the same on your Posts/Activity page for post
+                    history
+                  </span>
+                </div>
+                <div className="flex items-start gap-2">
+                  <span className="rounded-full bg-primary/10 text-primary text-xs font-bold w-5 h-5 flex items-center justify-center shrink-0 mt-0.5">
+                    3
+                  </span>
+                  <span>
+                    We parse your name, headline, about, experience, education
+                    &amp; posts — then generate your AI voice profile
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <Button onClick={() => setStep("profile")}>
+              <ClipboardPaste className="h-4 w-4 mr-2" />
+              Start import
+            </Button>
           </div>
         )}
 
-        {/* ---- Input step ---- */}
-        {(step === "input" || step === "importing") && (
-          <>
-            <div className="flex gap-3 mb-3">
+        {/* ========================================================= */}
+        {/*  STEP 1: Paste profile                                      */}
+        {/* ========================================================= */}
+        {step === "profile" && (
+          <div className="space-y-4 animate-fade-in">
+            <StepIndicator current={1} total={2} />
+
+            <div>
+              <label className="text-sm font-medium mb-1 block">
+                LinkedIn profile URL{" "}
+                <span className="text-muted-foreground font-normal">
+                  (optional)
+                </span>
+              </label>
               <Input
-                className="flex-1"
-                placeholder="LinkedIn handle or profile URL (e.g. johndoe or https://linkedin.com/in/johndoe)"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) =>
-                  e.key === "Enter" && !isImporting && handleImport()
-                }
-                disabled={isImporting}
+                placeholder="https://linkedin.com/in/yourname"
+                value={profileUrl}
+                onChange={(e) => setProfileUrl(e.target.value)}
               />
+            </div>
+
+            <div>
+              <label className="text-sm font-medium mb-1.5 block">
+                Paste your profile page
+              </label>
+              <p className="text-xs text-muted-foreground mb-2">
+                Go to your LinkedIn profile page → select all (<kbd className="px-1 py-0.5 bg-muted rounded text-xs font-mono">Ctrl+A</kbd>) → copy (<kbd className="px-1 py-0.5 bg-muted rounded text-xs font-mono">Ctrl+C</kbd>) → paste below
+              </p>
+              <Textarea
+                className="min-h-[200px] font-mono text-xs"
+                placeholder={"Paste your entire LinkedIn profile page content here...\n\nWe'll automatically extract your name, headline, about, experience, and education."}
+                value={pastedProfile}
+                onChange={(e) => setPastedProfile(e.target.value)}
+              />
+              {pastedProfile.trim() && (
+                <p className="text-xs text-muted-foreground mt-1">
+                  {pastedProfile.length.toLocaleString()} characters pasted
+                </p>
+              )}
+            </div>
+
+            <div className="flex items-center gap-3">
               <Button
-                onClick={() => handleImport()}
-                disabled={isImporting || !input.trim()}
+                onClick={() => setStep("posts")}
+                disabled={!pastedProfile.trim()}
               >
+                Next: Posts
+                <ArrowRight className="h-4 w-4 ml-2" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setStep("start")}
+              >
+                <ArrowLeft className="h-4 w-4 mr-1" />
+                Back
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* ========================================================= */}
+        {/*  STEP 2: Paste posts (optional)                             */}
+        {/* ========================================================= */}
+        {step === "posts" && (
+          <div className="space-y-4 animate-fade-in">
+            <StepIndicator current={2} total={2} />
+
+            <div>
+              <label className="text-sm font-medium mb-1.5 block">
+                Paste your posts{" "}
+                <span className="text-muted-foreground font-normal">
+                  (optional but recommended)
+                </span>
+              </label>
+              <p className="text-xs text-muted-foreground mb-2">
+                Go to your LinkedIn Activity → Posts tab → scroll down to load
+                posts → select all → copy → paste below. This helps us match your
+                writing voice.
+              </p>
+              <Textarea
+                className="min-h-[200px] font-mono text-xs"
+                placeholder={"Paste your LinkedIn posts/activity page content here...\n\nWe'll extract individual posts and their engagement metrics."}
+                value={pastedPosts}
+                onChange={(e) => setPastedPosts(e.target.value)}
+              />
+              {pastedPosts.trim() && (
+                <p className="text-xs text-muted-foreground mt-1">
+                  {pastedPosts.length.toLocaleString()} characters pasted
+                </p>
+              )}
+            </div>
+
+            <div className="flex items-center gap-3">
+              <Button onClick={handleImport} disabled={isImporting}>
                 {isImporting ? (
                   <>
                     <Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -212,71 +322,49 @@ export default function LinkedInImport({
                 ) : (
                   <>
                     <Sparkles className="h-4 w-4 mr-2" />
-                    Import
+                    Import &amp; analyse
                   </>
                 )}
               </Button>
-            </div>
-
-            {isImporting && (
-              <div className="rounded-lg bg-muted/50 border px-4 py-6 text-center mb-4">
-                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground mx-auto mb-3" />
-                <p className="text-sm font-medium">
-                  Analysing your LinkedIn profile...
-                </p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Fetching profile, parsing posts, generating your voice
-                  fingerprint
-                </p>
-              </div>
-            )}
-
-            {/* ---- Paste fallback ---- */}
-            {!isImporting && (
-              <button
-                type="button"
-                onClick={() => setShowPasteFallback(!showPasteFallback)}
-                className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors mb-4"
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setStep("profile")}
+                disabled={isImporting}
               >
-                <ClipboardPaste className="h-3.5 w-3.5" />
-                {showPasteFallback
-                  ? "Hide paste option"
-                  : "Can't access profile? Paste posts instead"}
-                {showPasteFallback ? (
-                  <ChevronUp className="h-3.5 w-3.5" />
-                ) : (
-                  <ChevronDown className="h-3.5 w-3.5" />
-                )}
-              </button>
-            )}
-
-            {showPasteFallback && !isImporting && (
-              <div className="space-y-3 mb-4">
-                <Textarea
-                  className="min-h-[160px]"
-                  placeholder={
-                    "Paste your LinkedIn posts here.\n\nSeparate each post with a blank line.\n\n--- Example ---\nJust shipped our new feature...\n\nHere's what I learned about leadership..."
-                  }
-                  value={pastedPosts}
-                  onChange={(e) => setPastedPosts(e.target.value)}
-                />
-                <Button
-                  variant="outline"
-                  onClick={() => handleImport(true)}
-                  disabled={isImporting || !pastedPosts.trim()}
-                >
-                  <ClipboardPaste className="h-4 w-4 mr-2" />
-                  Import pasted posts
-                </Button>
-              </div>
-            )}
-          </>
+                <ArrowLeft className="h-4 w-4 mr-1" />
+                Back
+              </Button>
+              {!pastedPosts.trim() && (
+                <span className="text-xs text-muted-foreground">
+                  You can skip this step
+                </span>
+              )}
+            </div>
+          </div>
         )}
 
-        {/* ---- Preview step ---- */}
+        {/* ========================================================= */}
+        {/*  IMPORTING STATE                                            */}
+        {/* ========================================================= */}
+        {step === "importing" && (
+          <div className="rounded-lg bg-muted/50 border px-4 py-8 text-center">
+            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground mx-auto mb-3" />
+            <p className="text-sm font-medium">
+              Analysing your LinkedIn profile...
+            </p>
+            <p className="text-xs text-muted-foreground mt-1">
+              Parsing profile, archiving posts, generating your voice fingerprint
+            </p>
+          </div>
+        )}
+
+        {/* ========================================================= */}
+        {/*  PREVIEW — review parsed data                               */}
+        {/* ========================================================= */}
         {step === "preview" && preview && (
           <div className="space-y-4 animate-fade-in">
-            <div className="flex items-center gap-2 text-sm font-medium mb-2">
+            <div className="flex items-center gap-2 text-sm font-medium">
               <CheckCircle2 className="h-4 w-4 text-emerald-600" />
               Import complete — review results
             </div>
@@ -303,7 +391,7 @@ export default function LinkedInImport({
                 value={
                   preview.postsFound > 0
                     ? `${preview.postsFound} found`
-                    : "None visible"
+                    : "None"
                 }
               />
               <StatCard
@@ -329,6 +417,9 @@ export default function LinkedInImport({
 
             {showDetails && (
               <div className="space-y-3 text-sm">
+                {preview.name && (
+                  <DetailRow label="Name" value={preview.name} />
+                )}
                 {preview.headline && (
                   <DetailRow label="Headline" value={preview.headline} />
                 )}
@@ -387,7 +478,12 @@ export default function LinkedInImport({
             <Separator />
 
             <div className="flex items-center gap-3">
-              <Button onClick={handleConfirm}>
+              <Button
+                onClick={() => {
+                  setStep("done");
+                  setPreview(null);
+                }}
+              >
                 <CheckCircle2 className="h-4 w-4 mr-2" />
                 Looks good
               </Button>
@@ -395,29 +491,6 @@ export default function LinkedInImport({
                 Re-import
               </Button>
             </div>
-
-            {preview.postsFound === 0 && (
-              <div className="rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800">
-                <p className="font-medium">No posts were visible</p>
-                <p className="text-xs mt-1">
-                  LinkedIn often restricts public access to posts. Try the
-                  &ldquo;Paste posts instead&rdquo; option below for best
-                  results.
-                </p>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="mt-2"
-                  onClick={() => {
-                    setStep("input");
-                    setShowPasteFallback(true);
-                  }}
-                >
-                  <ClipboardPaste className="h-3.5 w-3.5 mr-1.5" />
-                  Paste posts instead
-                </Button>
-              </div>
-            )}
           </div>
         )}
       </CardContent>
@@ -428,6 +501,37 @@ export default function LinkedInImport({
 /* ------------------------------------------------------------------ */
 /*  Sub-components                                                     */
 /* ------------------------------------------------------------------ */
+
+function StepIndicator({ current, total }: { current: number; total: number }) {
+  return (
+    <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
+      {Array.from({ length: total }, (_, i) => {
+        const num = i + 1;
+        const isActive = num === current;
+        const isDone = num < current;
+        return (
+          <div key={num} className="flex items-center gap-1.5">
+            {i > 0 && <div className="w-6 h-px bg-border" />}
+            <span
+              className={`rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold ${
+                isActive
+                  ? "bg-primary text-primary-foreground"
+                  : isDone
+                    ? "bg-emerald-100 text-emerald-700"
+                    : "bg-muted text-muted-foreground"
+              }`}
+            >
+              {isDone ? "\u2713" : num}
+            </span>
+            <span className={isActive ? "font-medium text-foreground" : ""}>
+              {num === 1 ? "Profile" : "Posts"}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 function StatCard({
   icon: Icon,
