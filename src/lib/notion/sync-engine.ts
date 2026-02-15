@@ -5,6 +5,7 @@ import {
   notionRequest,
   queryAllPages,
   queryPagesSince,
+  fetchPageContent,
 } from "./client";
 import {
   extractPostFromNotionPage,
@@ -353,6 +354,14 @@ export async function resolveConflict(
     );
     const extracted = extractPostFromNotionPage(page, syncState.property_map);
 
+    // Fetch page body if no content property
+    if (!extracted.content) {
+      try {
+        const bodyContent = await fetchPageContent(notion, post.notion_page_id);
+        if (bodyContent.trim()) extracted.content = bodyContent;
+      } catch { /* continue */ }
+    }
+
     await supabase
       .from("posts")
       .update({
@@ -445,7 +454,21 @@ async function upsertPostFromNotionPage(
   result: SyncResult,
   isFullSync: boolean
 ): Promise<void> {
+  const notion = createNotionClient(syncState.notion_access_token);
   const extracted = extractPostFromNotionPage(page, syncState.property_map);
+
+  // If no content from properties, fetch from page body (blocks)
+  if (!extracted.content) {
+    try {
+      const bodyContent = await fetchPageContent(notion, extracted.notion_page_id);
+      if (bodyContent.trim()) {
+        extracted.content = bodyContent;
+      }
+    } catch {
+      // Blocks API may fail for some pages — continue with empty content
+    }
+  }
+
   const now = new Date().toISOString();
 
   // Check if we already have this post linked
