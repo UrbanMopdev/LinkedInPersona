@@ -776,12 +776,12 @@ export default function WriteClient() {
                     <div>
                       <label className="text-xs text-muted-foreground block mb-1">Pillar</label>
                       {notionOptions.pillar && notionOptions.pillar.length > 0 ? (
-                        <Select value={postPillar} onValueChange={setPostPillar}>
+                        <Select value={postPillar || "_none"} onValueChange={(v) => setPostPillar(v === "_none" ? "" : v)}>
                           <SelectTrigger>
                             <SelectValue placeholder="Select pillar..." />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="">None</SelectItem>
+                            <SelectItem value="_none">None</SelectItem>
                             {notionOptions.pillar.map((opt) => (
                               <SelectItem key={opt.name} value={opt.name}>
                                 {opt.name}
@@ -831,12 +831,12 @@ export default function WriteClient() {
                         <FileType className="h-3 w-3" /> Post Type
                       </label>
                       {notionOptions.post_type && notionOptions.post_type.length > 0 ? (
-                        <Select value={postPostType} onValueChange={setPostPostType}>
+                        <Select value={postPostType || "_none"} onValueChange={(v) => setPostPostType(v === "_none" ? "" : v)}>
                           <SelectTrigger>
                             <SelectValue placeholder="Select post type..." />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="">None</SelectItem>
+                            <SelectItem value="_none">None</SelectItem>
                             {notionOptions.post_type.map((opt) => (
                               <SelectItem key={opt.name} value={opt.name}>
                                 {opt.name}
@@ -859,12 +859,12 @@ export default function WriteClient() {
                         <Users className="h-3 w-3" /> Target ICP
                       </label>
                       {notionOptions.target_icp && notionOptions.target_icp.length > 0 ? (
-                        <Select value={postTargetIcp} onValueChange={setPostTargetIcp}>
+                        <Select value={postTargetIcp || "_none"} onValueChange={(v) => setPostTargetIcp(v === "_none" ? "" : v)}>
                           <SelectTrigger>
                             <SelectValue placeholder="Select target ICP..." />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="">None</SelectItem>
+                            <SelectItem value="_none">None</SelectItem>
                             {notionOptions.target_icp.map((opt) => (
                               <SelectItem key={opt.name} value={opt.name}>
                                 {opt.name}
