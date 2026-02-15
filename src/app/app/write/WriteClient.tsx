@@ -8,9 +8,35 @@ import {
   createPost,
   updatePostContent,
   getPosts,
-  getPostVersions,
-  markAsPosted,
 } from "./actions";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
+import { EmptyState } from "@/components/empty-state";
+import { PageHeader } from "@/components/page-header";
+import {
+  Sparkles,
+  Save,
+  Trash2,
+  PenLine,
+  Lightbulb,
+  FileEdit,
+  RefreshCw,
+  Plus,
+  AlertCircle,
+  CheckCircle2,
+} from "lucide-react";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -41,125 +67,20 @@ interface Post {
   ideas: { title: string } | null;
 }
 
-interface PostVersion {
-  id: string;
-  post_id: string;
-  user_id: string;
-  content: string;
-  version_number: number;
-  created_at: string;
-}
-
-type Tab = "ideas" | "drafts" | "posts";
-
-/* ------------------------------------------------------------------ */
-/*  Shared styles                                                      */
-/* ------------------------------------------------------------------ */
-
-const btn: React.CSSProperties = {
-  padding: "8px 16px",
-  background: "#0a66c2",
-  color: "#fff",
-  border: "none",
-  borderRadius: 4,
-  cursor: "pointer",
-  fontSize: 14,
-};
-
-const btnSecondary: React.CSSProperties = {
-  ...btn,
-  background: "#fff",
-  color: "#0a66c2",
-  border: "1px solid #0a66c2",
-};
-
-const btnDanger: React.CSSProperties = {
-  ...btn,
-  background: "#fff",
-  color: "#cc1016",
-  border: "1px solid #cc1016",
-};
-
-const btnSmall: React.CSSProperties = { ...btn, padding: "4px 10px", fontSize: 13 };
-const btnSmallSecondary: React.CSSProperties = { ...btnSecondary, padding: "4px 10px", fontSize: 13 };
-const btnSmallDanger: React.CSSProperties = { ...btnDanger, padding: "4px 10px", fontSize: 13 };
-
-const card: React.CSSProperties = {
-  border: "1px solid #e0e0e0",
-  borderRadius: 8,
-  padding: 16,
-  marginBottom: 12,
-};
-
-const input: React.CSSProperties = {
-  width: "100%",
-  padding: "8px 12px",
-  border: "1px solid #ccc",
-  borderRadius: 4,
-  fontSize: 14,
-  boxSizing: "border-box",
-};
-
-const textarea: React.CSSProperties = {
-  ...input,
-  minHeight: 200,
-  resize: "vertical",
-  fontFamily: "inherit",
-};
-
-const label: React.CSSProperties = {
-  display: "block",
-  fontWeight: 600,
-  fontSize: 13,
-  marginBottom: 4,
-  color: "#333",
-};
-
-const badge = (color: string): React.CSSProperties => ({
-  display: "inline-block",
-  padding: "2px 8px",
-  borderRadius: 12,
-  fontSize: 12,
-  fontWeight: 600,
-  background: color,
-  color: "#fff",
-  marginLeft: 8,
-});
-
-const errorBox: React.CSSProperties = {
-  padding: "8px 12px",
-  background: "#fef2f2",
-  border: "1px solid #fca5a5",
-  borderRadius: 4,
-  color: "#b91c1c",
-  fontSize: 14,
-  marginBottom: 12,
-};
-
-const successBox: React.CSSProperties = {
-  padding: "8px 12px",
-  background: "#f0fdf4",
-  border: "1px solid #86efac",
-  borderRadius: 4,
-  color: "#166534",
-  fontSize: 14,
-  marginBottom: 12,
-};
-
 /* ------------------------------------------------------------------ */
 /*  Component                                                          */
 /* ------------------------------------------------------------------ */
 
 export default function WriteClient() {
-  /* ---- tab ---- */
-  const [activeTab, setActiveTab] = useState<Tab>("ideas");
-
   /* ---- ideas tab state ---- */
   const [topic, setTopic] = useState("");
-  const [generatedIdeas, setGeneratedIdeas] = useState<{ title: string; body: string }[]>([]);
+  const [generatedIdeas, setGeneratedIdeas] = useState<
+    { title: string; body: string }[]
+  >([]);
   const [savedIdeas, setSavedIdeas] = useState<Idea[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [ideaError, setIdeaError] = useState("");
+  const [ideasLoading, setIdeasLoading] = useState(true);
 
   /* ---- drafts tab state ---- */
   const [selectedIdeaId, setSelectedIdeaId] = useState("");
@@ -171,13 +92,10 @@ export default function WriteClient() {
   const [rewriteInstructions, setRewriteInstructions] = useState("");
   const [draftError, setDraftError] = useState("");
   const [draftSuccess, setDraftSuccess] = useState("");
-
-  /* ---- posts tab state ---- */
   const [posts, setPosts] = useState<Post[]>([]);
-  const [expandedVersions, setExpandedVersions] = useState<string | null>(null);
-  const [versions, setVersions] = useState<PostVersion[]>([]);
-  const [linkedinUrls, setLinkedinUrls] = useState<Record<string, string>>({});
-  const [postMessage, setPostMessage] = useState("");
+
+  /* ---- active tab ---- */
+  const [activeTab, setActiveTab] = useState("ideas");
 
   /* ================================================================ */
   /*  Data loading                                                     */
@@ -189,6 +107,8 @@ export default function WriteClient() {
       setSavedIdeas(data as Idea[]);
     } catch {
       /* ignore */
+    } finally {
+      setIdeasLoading(false);
     }
   }, []);
 
@@ -284,7 +204,9 @@ export default function WriteClient() {
       setDraftContent(data.content);
       setEditingIdeaId(idea.id);
     } catch (e: unknown) {
-      setDraftError(e instanceof Error ? e.message : "Draft generation failed");
+      setDraftError(
+        e instanceof Error ? e.message : "Draft generation failed"
+      );
     } finally {
       setIsBuilding(false);
     }
@@ -331,12 +253,15 @@ export default function WriteClient() {
     setDraftSuccess("");
     try {
       if (editingPostId) {
-        const { version } = await updatePostContent(editingPostId, draftContent.trim());
+        const { version } = await updatePostContent(
+          editingPostId,
+          draftContent.trim()
+        );
         setDraftSuccess(`Saved as version ${version}`);
       } else {
         const post = await createPost(
           draftContent.trim(),
-          editingIdeaId || undefined,
+          editingIdeaId || undefined
         );
         setEditingPostId(post.id);
         setDraftSuccess("Draft saved");
@@ -368,400 +293,351 @@ export default function WriteClient() {
   }
 
   /* ================================================================ */
-  /*  Posts tab handlers                                               */
+  /*  Character count helper                                           */
   /* ================================================================ */
 
-  async function handleToggleVersions(postId: string) {
-    if (expandedVersions === postId) {
-      setExpandedVersions(null);
-      setVersions([]);
-      return;
-    }
-    try {
-      const data = await getPostVersions(postId);
-      setVersions(data as PostVersion[]);
-      setExpandedVersions(postId);
-    } catch {
-      /* ignore */
-    }
-  }
-
-  async function handleMarkPosted(postId: string) {
-    setPostMessage("");
-    try {
-      await markAsPosted(postId, linkedinUrls[postId] || undefined);
-      setPostMessage("Post marked as published");
-      await loadPosts();
-    } catch (e: unknown) {
-      setPostMessage(e instanceof Error ? e.message : "Failed");
-    }
-  }
+  const charCount = draftContent.length;
+  const charColor =
+    charCount > 1300
+      ? "text-destructive"
+      : charCount > 1100
+        ? "text-amber-600"
+        : "text-muted-foreground";
 
   /* ================================================================ */
   /*  Render                                                           */
   /* ================================================================ */
 
-  const tabItems: { key: Tab; label: string }[] = [
-    { key: "ideas", label: "Idea Generator" },
-    { key: "drafts", label: "Draft Builder" },
-    { key: "posts", label: "Posts" },
-  ];
+  const draftPosts = posts.filter((p) => p.status === "draft");
 
   return (
-    <main style={{ maxWidth: 800, margin: "40px auto", padding: "0 16px" }}>
-      <h1>Write</h1>
+    <div className="mx-auto max-w-container px-6 py-8">
+      <PageHeader
+        title="Write"
+        description="Generate ideas, build drafts, and polish your LinkedIn posts."
+      />
 
-      {/* ---- Tabs ---- */}
-      <div style={{ display: "flex", gap: 0, marginTop: 24, borderBottom: "2px solid #eee" }}>
-        {tabItems.map((t) => (
-          <button
-            key={t.key}
-            onClick={() => setActiveTab(t.key)}
-            style={{
-              padding: "8px 20px",
-              border: "none",
-              borderBottom: activeTab === t.key ? "2px solid #0a66c2" : "2px solid transparent",
-              background: "none",
-              cursor: "pointer",
-              fontWeight: activeTab === t.key ? 600 : 400,
-              color: activeTab === t.key ? "#0a66c2" : "#666",
-              marginBottom: -2,
-              fontSize: 15,
-            }}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
+        <TabsList>
+          <TabsTrigger value="ideas" className="gap-2">
+            <Lightbulb className="h-4 w-4" />
+            Ideas
+          </TabsTrigger>
+          <TabsTrigger value="drafts" className="gap-2">
+            <FileEdit className="h-4 w-4" />
+            Draft Builder
+          </TabsTrigger>
+        </TabsList>
 
-      {/* ============================================================ */}
-      {/*  IDEAS TAB                                                    */}
-      {/* ============================================================ */}
-      {activeTab === "ideas" && (
-        <section style={{ marginTop: 24 }}>
-          {ideaError && <div style={errorBox}>{ideaError}</div>}
+        {/* ============================================================ */}
+        {/*  IDEAS TAB                                                    */}
+        {/* ============================================================ */}
+        <TabsContent value="ideas">
+          {ideaError && (
+            <div className="flex items-center gap-2 rounded-lg bg-destructive/10 border border-destructive/20 px-4 py-3 text-sm text-destructive mb-6">
+              <AlertCircle className="h-4 w-4 shrink-0" />
+              {ideaError}
+            </div>
+          )}
 
-          {/* Generate */}
-          <div style={{ display: "flex", gap: 8, marginBottom: 24 }}>
-            <input
-              style={{ ...input, flex: 1 }}
-              placeholder="Enter a topic (e.g. AI in recruiting, leadership lessons)…"
-              value={topic}
-              onChange={(e) => setTopic(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleGenerateIdeas()}
-            />
-            <button
-              style={btn}
-              onClick={handleGenerateIdeas}
-              disabled={isGenerating || !topic.trim()}
-            >
-              {isGenerating ? "Generating…" : "Generate Ideas"}
-            </button>
-          </div>
+          {/* Generate input */}
+          <Card className="mb-8">
+            <CardContent className="pt-6">
+              <div className="flex gap-3">
+                <Input
+                  className="flex-1"
+                  placeholder="Enter a topic (e.g. AI in recruiting, leadership lessons)..."
+                  value={topic}
+                  onChange={(e) => setTopic(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleGenerateIdeas()}
+                />
+                <Button
+                  onClick={handleGenerateIdeas}
+                  disabled={isGenerating || !topic.trim()}
+                >
+                  <Sparkles className="h-4 w-4 mr-2" />
+                  {isGenerating ? "Generating..." : "Generate"}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
 
           {/* Generated ideas */}
-          {generatedIdeas.length > 0 && (
-            <div style={{ marginBottom: 32 }}>
-              <h3 style={{ marginBottom: 12 }}>Generated Ideas</h3>
-              {generatedIdeas.map((idea, i) => (
-                <div key={i} style={card}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                    <div style={{ flex: 1 }}>
-                      <strong>{idea.title}</strong>
-                      <p style={{ margin: "4px 0 0", color: "#555", fontSize: 14 }}>
-                        {idea.body}
-                      </p>
-                    </div>
-                    <button
-                      style={btnSmall}
-                      onClick={() => handleSaveIdea(idea.title, idea.body)}
-                    >
-                      Save
-                    </button>
-                  </div>
-                </div>
+          {isGenerating && (
+            <div className="space-y-3 mb-8">
+              {[1, 2, 3].map((i) => (
+                <Skeleton key={i} className="h-20 w-full" />
               ))}
+            </div>
+          )}
+
+          {generatedIdeas.length > 0 && (
+            <div className="mb-8">
+              <h3 className="text-h3 mb-4">Generated Ideas</h3>
+              <div className="space-y-3">
+                {generatedIdeas.map((idea, i) => (
+                  <Card key={i} className="animate-fade-in">
+                    <CardContent className="pt-6">
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="flex-1 min-w-0">
+                          <h4 className="font-semibold text-sm mb-1">
+                            {idea.title}
+                          </h4>
+                          <p className="text-body-sm text-muted-foreground">
+                            {idea.body}
+                          </p>
+                        </div>
+                        <Button
+                          size="sm"
+                          onClick={() => handleSaveIdea(idea.title, idea.body)}
+                        >
+                          <Save className="h-3.5 w-3.5 mr-1.5" />
+                          Save
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
             </div>
           )}
 
           {/* Saved ideas */}
-          <h3 style={{ marginBottom: 12 }}>Saved Ideas ({savedIdeas.length})</h3>
-          {savedIdeas.length === 0 && (
-            <p style={{ color: "#888" }}>No saved ideas yet. Generate some above or save them manually.</p>
-          )}
-          {savedIdeas.map((idea) => (
-            <div key={idea.id} style={card}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                <div style={{ flex: 1 }}>
-                  <strong>{idea.title}</strong>
-                  <span style={badge(idea.status === "published" ? "#16a34a" : "#6b7280")}>
-                    {idea.status}
-                  </span>
-                  {idea.body && (
-                    <p style={{ margin: "4px 0 0", color: "#555", fontSize: 14 }}>
-                      {idea.body}
-                    </p>
-                  )}
-                </div>
-                <div style={{ display: "flex", gap: 6, flexShrink: 0, marginLeft: 12 }}>
-                  <button style={btnSmall} onClick={() => handleBuildDraftFromIdea(idea)}>
-                    Build Draft
-                  </button>
-                  <button style={btnSmallDanger} onClick={() => handleDeleteIdea(idea.id)}>
-                    Delete
-                  </button>
-                </div>
-              </div>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-h3">
+              Saved Ideas
+              <span className="ml-2 text-sm font-normal text-muted-foreground">
+                ({savedIdeas.length})
+              </span>
+            </h3>
+          </div>
+
+          {ideasLoading ? (
+            <div className="space-y-3">
+              {[1, 2, 3].map((i) => (
+                <Skeleton key={i} className="h-16 w-full" />
+              ))}
             </div>
-          ))}
-        </section>
-      )}
+          ) : savedIdeas.length === 0 ? (
+            <EmptyState
+              icon={Lightbulb}
+              title="No ideas yet"
+              description="Generate some ideas above or they'll appear here when you save them."
+            />
+          ) : (
+            <div className="space-y-3">
+              {savedIdeas.map((idea) => (
+                <Card key={idea.id}>
+                  <CardContent className="pt-6">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <h4 className="font-semibold text-sm">
+                            {idea.title}
+                          </h4>
+                          <Badge
+                            variant={
+                              idea.status === "published"
+                                ? "success"
+                                : "secondary"
+                            }
+                          >
+                            {idea.status}
+                          </Badge>
+                        </div>
+                        {idea.body && (
+                          <p className="text-body-sm text-muted-foreground">
+                            {idea.body}
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <Button
+                          size="sm"
+                          onClick={() => handleBuildDraftFromIdea(idea)}
+                        >
+                          <PenLine className="h-3.5 w-3.5 mr-1.5" />
+                          Draft
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => handleDeleteIdea(idea.id)}
+                          className="text-muted-foreground hover:text-destructive"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+        </TabsContent>
 
-      {/* ============================================================ */}
-      {/*  DRAFTS TAB                                                   */}
-      {/* ============================================================ */}
-      {activeTab === "drafts" && (
-        <section style={{ marginTop: 24 }}>
-          {draftError && <div style={errorBox}>{draftError}</div>}
-          {draftSuccess && <div style={successBox}>{draftSuccess}</div>}
+        {/* ============================================================ */}
+        {/*  DRAFTS TAB                                                   */}
+        {/* ============================================================ */}
+        <TabsContent value="drafts">
+          {draftError && (
+            <div className="flex items-center gap-2 rounded-lg bg-destructive/10 border border-destructive/20 px-4 py-3 text-sm text-destructive mb-6">
+              <AlertCircle className="h-4 w-4 shrink-0" />
+              {draftError}
+            </div>
+          )}
+          {draftSuccess && (
+            <div className="flex items-center gap-2 rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3 text-sm text-emerald-800 mb-6">
+              <CheckCircle2 className="h-4 w-4 shrink-0" />
+              {draftSuccess}
+            </div>
+          )}
 
-          {/* Header row */}
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-            <h3 style={{ margin: 0 }}>
+          {/* Header */}
+          <div className="flex items-center justify-between mb-6">
+            <h3 className="text-h3">
               {editingPostId ? "Editing Post" : "New Draft"}
             </h3>
             {(editingPostId || draftContent) && (
-              <button style={btnSmallSecondary} onClick={handleNewDraft}>
+              <Button variant="outline" size="sm" onClick={handleNewDraft}>
+                <Plus className="h-3.5 w-3.5 mr-1.5" />
                 New Draft
-              </button>
+              </Button>
             )}
           </div>
 
-          {/* Idea selector + generate */}
-          <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-            <select
-              style={{ ...input, flex: 1 }}
-              value={selectedIdeaId}
-              onChange={(e) => setSelectedIdeaId(e.target.value)}
-            >
-              <option value="">— Select a saved idea —</option>
-              {savedIdeas.map((idea) => (
-                <option key={idea.id} value={idea.id}>
-                  {idea.title}
-                </option>
-              ))}
-            </select>
-            <button
-              style={btn}
+          {/* Idea selector */}
+          <div className="flex gap-3 mb-6">
+            <Select value={selectedIdeaId} onValueChange={setSelectedIdeaId}>
+              <SelectTrigger className="flex-1">
+                <SelectValue placeholder="Select a saved idea..." />
+              </SelectTrigger>
+              <SelectContent>
+                {savedIdeas.map((idea) => (
+                  <SelectItem key={idea.id} value={idea.id}>
+                    {idea.title}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button
               onClick={handleBuildDraft}
               disabled={isBuilding || !selectedIdeaId}
             >
-              {isBuilding ? "Building…" : "Build Draft"}
-            </button>
+              <Sparkles className="h-4 w-4 mr-2" />
+              {isBuilding ? "Building..." : "Build Draft"}
+            </Button>
           </div>
 
           {/* Editor */}
-          <div style={{ marginBottom: 16 }}>
-            <label style={label}>Draft Content</label>
-            <textarea
-              style={textarea}
-              value={draftContent}
-              onChange={(e) => setDraftContent(e.target.value)}
-              placeholder="Write your LinkedIn post here, or generate one from an idea above…"
-            />
-            <div style={{ textAlign: "right", fontSize: 12, color: draftContent.length > 1300 ? "#cc1016" : "#888", marginTop: 2 }}>
-              {draftContent.length} / 1300 chars
+          {isBuilding ? (
+            <Skeleton className="h-[240px] w-full mb-4" />
+          ) : (
+            <div className="mb-4">
+              <label className="text-sm font-medium mb-2 block">
+                Draft Content
+              </label>
+              <Textarea
+                className="min-h-[240px]"
+                value={draftContent}
+                onChange={(e) => setDraftContent(e.target.value)}
+                placeholder="Write your LinkedIn post here, or generate one from an idea above..."
+              />
+              <div className={`text-right text-xs mt-1.5 ${charColor}`}>
+                {charCount} / 1,300 characters
+              </div>
             </div>
-          </div>
+          )}
 
-          {/* Save */}
-          <div style={{ display: "flex", gap: 8, marginBottom: 24 }}>
-            <button
-              style={btn}
-              onClick={handleSaveDraft}
-              disabled={!draftContent.trim()}
-            >
+          {/* Actions */}
+          <div className="flex items-center gap-3 mb-8">
+            <Button onClick={handleSaveDraft} disabled={!draftContent.trim()}>
+              <Save className="h-4 w-4 mr-2" />
               {editingPostId ? "Save New Version" : "Save Draft"}
-            </button>
+            </Button>
           </div>
 
           {/* Rewrite tool */}
-          <div style={{ ...card, background: "#f8fafc" }}>
-            <h4 style={{ margin: "0 0 8px" }}>Rewrite Tool</h4>
-            <div style={{ display: "flex", gap: 8 }}>
-              <input
-                style={{ ...input, flex: 1 }}
-                placeholder="Rewrite instructions (e.g. make it more casual, add a CTA)…"
-                value={rewriteInstructions}
-                onChange={(e) => setRewriteInstructions(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleRewrite()}
-              />
-              <button
-                style={btnSecondary}
-                onClick={handleRewrite}
-                disabled={isRewriting || !draftContent.trim() || !rewriteInstructions.trim()}
-              >
-                {isRewriting ? "Rewriting…" : "Rewrite"}
-              </button>
-            </div>
-          </div>
-
-          {/* Existing drafts list */}
-          <h3 style={{ marginTop: 32, marginBottom: 12 }}>
-            Existing Drafts
-          </h3>
-          {posts.filter((p) => p.status === "draft").length === 0 && (
-            <p style={{ color: "#888" }}>No draft posts yet.</p>
-          )}
-          {posts
-            .filter((p) => p.status === "draft")
-            .map((post) => (
-              <div
-                key={post.id}
-                style={{
-                  ...card,
-                  borderColor: editingPostId === post.id ? "#0a66c2" : "#e0e0e0",
-                }}
-              >
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    {post.ideas?.title && (
-                      <div style={{ fontSize: 12, color: "#888", marginBottom: 4 }}>
-                        From idea: {post.ideas.title}
-                      </div>
-                    )}
-                    <p style={{ margin: 0, fontSize: 14, whiteSpace: "pre-wrap", overflow: "hidden", textOverflow: "ellipsis", maxHeight: 60 }}>
-                      {post.content.slice(0, 150)}
-                      {post.content.length > 150 ? "…" : ""}
-                    </p>
-                    <div style={{ fontSize: 12, color: "#888", marginTop: 4 }}>
-                      Updated {new Date(post.updated_at).toLocaleDateString()}
-                    </div>
-                  </div>
-                  <button style={btnSmallSecondary} onClick={() => handleEditPost(post)}>
-                    Edit
-                  </button>
-                </div>
+          <Card className="bg-muted/50 mb-8">
+            <CardContent className="pt-6">
+              <h4 className="text-sm font-semibold mb-3 flex items-center gap-2">
+                <RefreshCw className="h-4 w-4" />
+                Rewrite Tool
+              </h4>
+              <div className="flex gap-3">
+                <Input
+                  className="flex-1"
+                  placeholder="Rewrite instructions (e.g. make it more casual, add a CTA)..."
+                  value={rewriteInstructions}
+                  onChange={(e) => setRewriteInstructions(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleRewrite()}
+                />
+                <Button
+                  variant="outline"
+                  onClick={handleRewrite}
+                  disabled={
+                    isRewriting ||
+                    !draftContent.trim() ||
+                    !rewriteInstructions.trim()
+                  }
+                >
+                  {isRewriting ? "Rewriting..." : "Rewrite"}
+                </Button>
               </div>
-            ))}
-        </section>
-      )}
+            </CardContent>
+          </Card>
 
-      {/* ============================================================ */}
-      {/*  POSTS TAB                                                    */}
-      {/* ============================================================ */}
-      {activeTab === "posts" && (
-        <section style={{ marginTop: 24 }}>
-          {postMessage && (
-            <div style={postMessage.includes("fail") || postMessage.includes("Failed") ? errorBox : successBox}>
-              {postMessage}
-            </div>
-          )}
-
-          <h3 style={{ marginBottom: 12 }}>All Posts ({posts.length})</h3>
-          {posts.length === 0 && (
-            <p style={{ color: "#888" }}>No posts yet. Create a draft in the Draft Builder tab.</p>
-          )}
-          {posts.map((post) => (
-            <div key={post.id} style={card}>
-              {/* Header */}
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  {post.ideas?.title && (
-                    <div style={{ fontSize: 12, color: "#888", marginBottom: 2 }}>
-                      From idea: {post.ideas.title}
-                    </div>
-                  )}
-                  <span style={badge(post.status === "published" ? "#16a34a" : post.status === "scheduled" ? "#d97706" : "#6b7280")}>
-                    {post.status}
-                  </span>
-                  {post.published_at && (
-                    <span style={{ fontSize: 12, color: "#888", marginLeft: 8 }}>
-                      Published {new Date(post.published_at).toLocaleDateString()}
-                    </span>
-                  )}
-                </div>
-                <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                  {post.status === "draft" && (
-                    <button style={btnSmallSecondary} onClick={() => handleEditPost(post)}>
-                      Edit
-                    </button>
-                  )}
-                  <button
-                    style={btnSmallSecondary}
-                    onClick={() => handleToggleVersions(post.id)}
-                  >
-                    {expandedVersions === post.id ? "Hide Versions" : "View Versions"}
-                  </button>
-                </div>
-              </div>
-
-              {/* Content preview */}
-              <p style={{ margin: "0 0 8px", fontSize: 14, whiteSpace: "pre-wrap", overflow: "hidden", maxHeight: 80 }}>
-                {post.content.slice(0, 200)}
-                {post.content.length > 200 ? "…" : ""}
-              </p>
-
-              {/* LinkedIn URL display */}
-              {post.linkedin_url && (
-                <div style={{ fontSize: 13, marginBottom: 8 }}>
-                  <strong>LinkedIn:</strong>{" "}
-                  <a href={post.linkedin_url} target="_blank" rel="noopener noreferrer">
-                    {post.linkedin_url}
-                  </a>
-                </div>
-              )}
-
-              {/* Mark as posted controls */}
-              {post.status !== "published" && (
-                <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8, paddingTop: 8, borderTop: "1px solid #eee" }}>
-                  <input
-                    style={{ ...input, flex: 1 }}
-                    placeholder="LinkedIn post URL (optional)"
-                    value={linkedinUrls[post.id] || ""}
-                    onChange={(e) =>
-                      setLinkedinUrls((prev) => ({ ...prev, [post.id]: e.target.value }))
-                    }
-                  />
-                  <button style={btnSmall} onClick={() => handleMarkPosted(post.id)}>
-                    Mark as Posted
-                  </button>
-                </div>
-              )}
-
-              {/* Version history */}
-              {expandedVersions === post.id && (
-                <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid #eee" }}>
-                  <h4 style={{ margin: "0 0 8px", fontSize: 14 }}>Version History</h4>
-                  {versions.length === 0 && <p style={{ color: "#888", fontSize: 13 }}>No versions found.</p>}
-                  {versions.map((v) => (
-                    <div
-                      key={v.id}
-                      style={{
-                        padding: "8px 12px",
-                        marginBottom: 8,
-                        background: "#f9fafb",
-                        borderRadius: 4,
-                        border: "1px solid #e5e7eb",
-                      }}
-                    >
-                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                        <strong style={{ fontSize: 13 }}>Version {v.version_number}</strong>
-                        <span style={{ fontSize: 12, color: "#888" }}>
-                          {new Date(v.created_at).toLocaleString()}
-                        </span>
+          {/* Existing drafts */}
+          <h3 className="text-h3 mb-4">Existing Drafts</h3>
+          {draftPosts.length === 0 ? (
+            <EmptyState
+              icon={FileEdit}
+              title="No drafts yet"
+              description="Build a draft from an idea above, or write one from scratch."
+            />
+          ) : (
+            <div className="space-y-3">
+              {draftPosts.map((post) => (
+                <Card
+                  key={post.id}
+                  className={
+                    editingPostId === post.id
+                      ? "border-primary/40 shadow-sm"
+                      : ""
+                  }
+                >
+                  <CardContent className="pt-6">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex-1 min-w-0">
+                        {post.ideas?.title && (
+                          <p className="text-xs text-muted-foreground mb-1">
+                            From idea: {post.ideas.title}
+                          </p>
+                        )}
+                        <p className="text-sm text-foreground line-clamp-2">
+                          {post.content.slice(0, 150)}
+                          {post.content.length > 150 ? "..." : ""}
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-2">
+                          Updated{" "}
+                          {new Date(post.updated_at).toLocaleDateString()}
+                        </p>
                       </div>
-                      <p style={{ margin: 0, fontSize: 13, whiteSpace: "pre-wrap", color: "#444" }}>
-                        {v.content}
-                      </p>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleEditPost(post)}
+                      >
+                        Edit
+                      </Button>
                     </div>
-                  ))}
-                </div>
-              )}
+                  </CardContent>
+                </Card>
+              ))}
             </div>
-          ))}
-        </section>
-      )}
-    </main>
+          )}
+        </TabsContent>
+      </Tabs>
+    </div>
   );
 }

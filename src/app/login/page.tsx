@@ -3,6 +3,10 @@
 import { createClient } from "@/lib/supabase/client";
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { PenLine, AlertCircle } from "lucide-react";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -34,84 +38,118 @@ export default function LoginPage() {
   }
 
   return (
-    <main style={{ maxWidth: 400, margin: "80px auto", padding: "0 16px" }}>
-      <h1>{mode === "signup" ? "Create account" : "Sign in to LinkedIn Persona"}</h1>
-      <form onSubmit={handleSubmit}>
-        <label htmlFor="email" style={{ display: "block", marginBottom: 4 }}>
-          Email address
-        </label>
-        <input
-          id="email"
-          type="email"
-          required
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          placeholder="you@example.com"
-          style={{
-            width: "100%",
-            padding: 8,
-            marginBottom: 12,
-            boxSizing: "border-box",
-          }}
-        />
-        <label htmlFor="password" style={{ display: "block", marginBottom: 4 }}>
-          Password
-        </label>
-        <input
-          id="password"
-          type="password"
-          required
-          minLength={6}
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          placeholder="At least 6 characters"
-          style={{
-            width: "100%",
-            padding: 8,
-            marginBottom: 12,
-            boxSizing: "border-box",
-          }}
-        />
-        <button
-          type="submit"
-          disabled={loading}
-          style={{ width: "100%", padding: 10 }}
-        >
-          {loading
-            ? mode === "signup"
-              ? "Creating account..."
-              : "Signing in..."
-            : mode === "signup"
-              ? "Create account"
-              : "Sign in"}
-        </button>
-        {error && <p style={{ color: "red", marginTop: 8 }}>{error}</p>}
-      </form>
-      <p style={{ marginTop: 16, textAlign: "center", fontSize: 14 }}>
-        {mode === "login" ? (
-          <>
-            Don&apos;t have an account?{" "}
-            <button
-              type="button"
-              onClick={() => { setMode("signup"); setError(null); }}
-              style={{ background: "none", border: "none", color: "#0070f3", cursor: "pointer", padding: 0, fontSize: 14 }}
-            >
-              Sign up
-            </button>
-          </>
-        ) : (
-          <>
-            Already have an account?{" "}
-            <button
-              type="button"
-              onClick={() => { setMode("login"); setError(null); }}
-              style={{ background: "none", border: "none", color: "#0070f3", cursor: "pointer", padding: 0, fontSize: 14 }}
-            >
-              Sign in
-            </button>
-          </>
-        )}
-      </p>
-    </main>
+    <div className="min-h-screen flex items-center justify-center px-4 bg-background">
+      <div className="w-full max-w-[400px]">
+        {/* Logo */}
+        <div className="flex flex-col items-center mb-8">
+          <div className="h-12 w-12 rounded-2xl bg-primary flex items-center justify-center mb-4">
+            <PenLine className="h-6 w-6 text-primary-foreground" />
+          </div>
+          <h1 className="text-h1 text-center">Persona</h1>
+          <p className="text-body text-muted-foreground mt-1">
+            AI-powered LinkedIn content
+          </p>
+        </div>
+
+        <Card>
+          <CardHeader className="text-center">
+            <CardTitle className="text-h3">
+              {mode === "signup" ? "Create your account" : "Welcome back"}
+            </CardTitle>
+            <CardDescription>
+              {mode === "signup"
+                ? "Start creating better LinkedIn content"
+                : "Sign in to continue"}
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div className="space-y-2">
+                <label
+                  htmlFor="email"
+                  className="text-sm font-medium leading-none"
+                >
+                  Email
+                </label>
+                <Input
+                  id="email"
+                  type="email"
+                  required
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="you@example.com"
+                />
+              </div>
+              <div className="space-y-2">
+                <label
+                  htmlFor="password"
+                  className="text-sm font-medium leading-none"
+                >
+                  Password
+                </label>
+                <Input
+                  id="password"
+                  type="password"
+                  required
+                  minLength={6}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="At least 6 characters"
+                />
+              </div>
+
+              {error && (
+                <div className="flex items-center gap-2 rounded-lg bg-destructive/10 border border-destructive/20 px-3 py-2 text-sm text-destructive">
+                  <AlertCircle className="h-4 w-4 shrink-0" />
+                  {error}
+                </div>
+              )}
+
+              <Button type="submit" disabled={loading} className="w-full">
+                {loading
+                  ? mode === "signup"
+                    ? "Creating account..."
+                    : "Signing in..."
+                  : mode === "signup"
+                    ? "Create account"
+                    : "Sign in"}
+              </Button>
+            </form>
+
+            <div className="mt-6 text-center text-sm text-muted-foreground">
+              {mode === "login" ? (
+                <>
+                  Don&apos;t have an account?{" "}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMode("signup");
+                      setError(null);
+                    }}
+                    className="font-medium text-primary hover:text-primary/80 transition-colors"
+                  >
+                    Sign up
+                  </button>
+                </>
+              ) : (
+                <>
+                  Already have an account?{" "}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMode("login");
+                      setError(null);
+                    }}
+                    className="font-medium text-primary hover:text-primary/80 transition-colors"
+                  >
+                    Sign in
+                  </button>
+                </>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
   );
 }
