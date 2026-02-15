@@ -487,6 +487,7 @@ async function upsertPostFromNotionPage(
     await supabase
       .from("posts")
       .update({
+        title: extracted.title || existingPost.title,
         content: extracted.content || existingPost.content,
         status: mapNotionStatusToApp(extracted.status),
         published_at:
@@ -504,11 +505,45 @@ async function upsertPostFromNotionPage(
         updated_at: now,
       })
       .eq("id", existingPost.id);
+
+    // Sync analytics from Notion if available
+    if (extracted.impressions !== null || extracted.likes !== null || extracted.comments !== null) {
+      const { data: existingAnalytics } = await supabase
+        .from("post_analytics")
+        .select("id")
+        .eq("post_id", existingPost.id)
+        .eq("user_id", syncState.user_id)
+        .order("fetched_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      const metricsPayload = {
+        impressions: extracted.impressions || 0,
+        likes: extracted.likes || 0,
+        comments: extracted.comments || 0,
+        fetched_at: now,
+      };
+
+      if (existingAnalytics) {
+        await supabase
+          .from("post_analytics")
+          .update(metricsPayload)
+          .eq("id", existingAnalytics.id);
+      } else {
+        await supabase.from("post_analytics").insert({
+          post_id: existingPost.id,
+          user_id: syncState.user_id,
+          ...metricsPayload,
+        });
+      }
+    }
+
     result.pagesUpdated++;
   } else {
     // Create new post from Notion page
     const { error } = await supabase.from("posts").insert({
       user_id: syncState.user_id,
+      title: extracted.title,
       content: extracted.content || extracted.title || "",
       status: mapNotionStatusToApp(extracted.status),
       published_at: extracted.publish_date
@@ -543,13 +578,26 @@ async function pushPostToNotion(
   post: any,
   result: SyncResult
 ): Promise<void> {
-  const title = post.content?.split("\n")[0]?.slice(0, 100) || "Untitled";
+  const title = post.title || post.content?.split("\n")[0]?.slice(0, 100) || "Untitled";
   const now = new Date().toISOString();
 
   if (post.notion_page_id) {
-    // Update existing page in Notion
+    // Update existing page in Notion — include analytics if available
+    const { data: analytics } = await supabase
+      .from("post_analytics")
+      .select("impressions, likes, comments")
+      .eq("post_id", post.id)
+      .eq("user_id", syncState.user_id)
+      .order("fetched_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    const postWithAnalytics = analytics
+      ? { ...post, impressions: analytics.impressions, likes: analytics.likes, comments_count: analytics.comments }
+      : post;
+
     const properties = buildNotionProperties(
-      post,
+      postWithAnalytics,
       title,
       syncState.property_map
     );

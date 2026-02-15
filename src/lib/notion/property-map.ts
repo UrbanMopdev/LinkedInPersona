@@ -82,6 +82,9 @@ interface PostData {
   pillar: string | null;
   tags: string[] | null;
   notes: string | null;
+  impressions?: number | null;
+  likes?: number | null;
+  comments_count?: number | null;
 }
 
 export function buildNotionProperties(
@@ -155,6 +158,21 @@ export function buildNotionProperties(
     props[propertyMap.notes] = {
       rich_text: chunkRichText(post.notes),
     };
+  }
+
+  // Impressions (number)
+  if (propertyMap.impressions && post.impressions != null) {
+    props[propertyMap.impressions] = { number: post.impressions };
+  }
+
+  // Likes (number)
+  if (propertyMap.likes && post.likes != null) {
+    props[propertyMap.likes] = { number: post.likes };
+  }
+
+  // Comments (number)
+  if (propertyMap.comments && post.comments_count != null) {
+    props[propertyMap.comments] = { number: post.comments_count };
   }
 
   return props;
