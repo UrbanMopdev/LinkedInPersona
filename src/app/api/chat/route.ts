@@ -87,10 +87,10 @@ export async function POST(req: Request) {
 
     const history = (recentMessages || []).reverse();
 
-    // 6. Fetch voice guide
+    // 6. Fetch voice guide + voice fingerprint
     const { data: profile } = await supabase
       .from("profiles")
-      .select("voice_guide")
+      .select("voice_guide, voice_fingerprint, positioning_summary")
       .eq("id", user.id)
       .single();
 
@@ -100,9 +100,18 @@ export async function POST(req: Request) {
       "You help the user brainstorm ideas, draft posts, refine their voice, and improve their LinkedIn presence.",
     ];
 
-    if (profile?.voice_guide) {
+    // Prefer voice_fingerprint (AI-generated from import) over manual voice_guide
+    const voiceInstructions =
+      profile?.voice_fingerprint || profile?.voice_guide;
+    if (voiceInstructions) {
       contextParts.push(
-        `\nThe user has this voice/style guide:\n"""\n${profile.voice_guide}\n"""`,
+        `\nThe user has this voice/style guide — always match this voice:\n"""\n${voiceInstructions}\n"""`,
+      );
+    }
+
+    if (profile?.positioning_summary) {
+      contextParts.push(
+        `\nThe user's professional positioning:\n"""\n${profile.positioning_summary}\n"""`,
       );
     }
 

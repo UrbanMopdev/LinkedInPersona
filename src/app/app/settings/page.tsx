@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { User, Globe, Clock, Mail } from "lucide-react";
+import LinkedInImport from "./LinkedInImport";
 
 export default async function SettingsPage() {
   const supabase = await createClient();
@@ -58,7 +59,15 @@ export default async function SettingsPage() {
         </p>
       </div>
 
-      <div className="max-w-2xl">
+      <div className="max-w-2xl space-y-6">
+        {/* LinkedIn Import */}
+        <LinkedInImport
+          currentProfileUrl={profile?.linkedin_profile_url || null}
+          currentHeadline={profile?.linkedin_headline || null}
+          lastImportedAt={profile?.linkedin_last_imported_at || null}
+        />
+
+        {/* Profile Card */}
         <Card>
           <CardHeader>
             <CardTitle className="text-h3">Profile</CardTitle>
@@ -94,9 +103,43 @@ export default async function SettingsPage() {
           </CardContent>
         </Card>
 
-        <p className="text-body-sm text-muted-foreground mt-6 text-center">
-          Profile editing coming soon.
-        </p>
+        {/* Voice & Positioning (show if imported) */}
+        {(profile?.positioning_summary || profile?.voice_fingerprint) && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-h3">AI Voice Profile</CardTitle>
+              <CardDescription>
+                Generated from your LinkedIn import. Used to match your writing
+                style.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {profile.positioning_summary && (
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">
+                    Positioning Summary
+                  </p>
+                  <p className="text-sm whitespace-pre-wrap">
+                    {profile.positioning_summary}
+                  </p>
+                </div>
+              )}
+              {profile.positioning_summary && profile.voice_fingerprint && (
+                <Separator />
+              )}
+              {profile.voice_fingerprint && (
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">
+                    Voice Fingerprint
+                  </p>
+                  <p className="text-sm whitespace-pre-wrap">
+                    {profile.voice_fingerprint}
+                  </p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
       </div>
     </div>
   );
