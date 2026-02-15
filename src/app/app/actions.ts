@@ -113,6 +113,17 @@ export async function updatePostFields(
     .eq("user_id", user.id)
     .single();
 
+  // Check if Notion auto-create is on (for posts not yet linked)
+  const { data: notionState } = await supabase
+    .from("notion_sync_state")
+    .select("auto_create_in_notion, is_connected")
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  const shouldMarkPending =
+    existing?.notion_page_id ||
+    (notionState?.is_connected && notionState?.auto_create_in_notion);
+
   const payload: Record<string, unknown> = {
     ...fields,
     updated_at: new Date().toISOString(),
@@ -125,7 +136,7 @@ export async function updatePostFields(
     payload.published_at = new Date().toISOString();
   }
 
-  if (existing?.notion_page_id) {
+  if (shouldMarkPending) {
     payload.sync_status = "pending";
   }
 

@@ -253,16 +253,40 @@ export async function incrementalAppToNotion(
 
   const notion = createNotionClient(syncState.notion_access_token);
 
-  // Find posts with sync_status = 'pending' that need pushing to Notion
+  // Find posts that need pushing to Notion:
+  // 1. Posts with sync_status = 'pending' (edited Notion-linked posts)
+  // 2. Posts with no notion_page_id when auto_create is on (new app posts)
   const { data: pendingPosts, error } = await supabase
     .from("posts")
     .select("*")
     .eq("user_id", syncState.user_id)
     .eq("sync_status", "pending");
 
-  if (error || !pendingPosts) return result;
+  const postsToSync = [...(pendingPosts || [])];
 
-  for (const post of pendingPosts) {
+  // Also pick up new app-created posts that haven't been linked to Notion yet
+  if (syncState.auto_create_in_notion) {
+    const { data: unlinkedPosts } = await supabase
+      .from("posts")
+      .select("*")
+      .eq("user_id", syncState.user_id)
+      .is("notion_page_id", null)
+      .neq("sync_status", "synced");
+
+    if (unlinkedPosts) {
+      // Avoid duplicates
+      const existingIds = new Set(postsToSync.map((p) => p.id));
+      for (const post of unlinkedPosts) {
+        if (!existingIds.has(post.id)) {
+          postsToSync.push(post);
+        }
+      }
+    }
+  }
+
+  if (error || postsToSync.length === 0) return result;
+
+  for (const post of postsToSync) {
     result.pagesProcessed++;
     try {
       await pushPostToNotion(supabase, notion, syncState, post, result);
