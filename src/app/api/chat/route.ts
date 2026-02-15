@@ -69,13 +69,26 @@ export async function POST(req: Request) {
       if (memories) memoryContext = memories;
 
       // Top 5 similar linkedin_posts_archive posts
-      const { data: posts } = await supabase.rpc("match_linkedin_posts", {
-        query_embedding: JSON.stringify(queryEmbedding),
-        match_user_id: user.id,
-        match_count: 5,
-      });
-      if (posts) archiveContext = posts;
+      const { data: archivePosts } = await supabase.rpc(
+        "match_linkedin_posts",
+        {
+          query_embedding: JSON.stringify(queryEmbedding),
+          match_user_id: user.id,
+          match_count: 5,
+        },
+      );
+      if (archivePosts) archiveContext = archivePosts;
     }
+
+    // 4b. Fetch ALL posts from the database for full context
+    const { data: allPosts } = await supabase
+      .from("posts")
+      .select(
+        "title, content, status, pillar, platform, post_type, target_icp, tags, notes, published_at, scheduled_at",
+      )
+      .eq("user_id", user.id)
+      .order("updated_at", { ascending: false })
+      .limit(50);
 
     // 5. Retrieve last 10 conversation messages
     const { data: recentMessages } = await supabase
@@ -98,6 +111,22 @@ export async function POST(req: Request) {
     const contextParts: string[] = [
       "You are a helpful LinkedIn content strategist and writing assistant.",
       "You help the user brainstorm ideas, draft posts, refine their voice, and improve their LinkedIn presence.",
+      "",
+      "IMPORTANT: When the user asks you to create, draft, or curate a post, you MUST format it using the following block so they can save it directly to their calendar:",
+      '```post',
+      'TITLE: [Post title]',
+      'PILLAR: [Content pillar, e.g. Real Decisions Real Trade-offs]',
+      'PLATFORM: LinkedIn',
+      'POST_TYPE: [e.g. Short insight, Commentary, Story, Listicle]',
+      'TARGET_ICP: [Target audience]',
+      'TAGS: [comma-separated tags]',
+      'STATUS: draft',
+      'NOTES: [Any signal notes or context]',
+      '---',
+      '[The actual post content here]',
+      '```',
+      "",
+      "Always fill in ALL the attributes above based on context from the user's existing posts, voice, and positioning. Only produce ONE post at a time. Make the post content ready to use — hooks, body, CTA, everything.",
     ];
 
     // Prefer voice_fingerprint (AI-generated from import) over manual voice_guide
@@ -136,6 +165,29 @@ export async function POST(req: Request) {
                 `${i + 1}. ${p.content.slice(0, 300)}${p.content.length > 300 ? "…" : ""}`,
             )
             .join("\n\n"),
+      );
+    }
+
+    // Include all posts from the user's content calendar for full context
+    if (allPosts && allPosts.length > 0) {
+      const postSummaries = allPosts.map((p, i) => {
+        const parts = [`${i + 1}.`];
+        if (p.title) parts.push(`"${p.title}"`);
+        if (p.pillar) parts.push(`[${p.pillar}]`);
+        if (p.status) parts.push(`(${p.status})`);
+        if (p.post_type) parts.push(`type:${p.post_type}`);
+        if (p.target_icp) parts.push(`icp:${p.target_icp}`);
+        if (p.tags && p.tags.length > 0)
+          parts.push(`tags:${p.tags.join(",")}`);
+        parts.push(
+          `content:"${p.content.slice(0, 200)}${p.content.length > 200 ? "…" : ""}"`,
+        );
+        return parts.join(" ");
+      });
+
+      contextParts.push(
+        `\nThe user's content calendar has ${allPosts.length} posts. Here is a summary of their existing posts (use this to understand their tone, voice, topics, and style):\n` +
+          postSummaries.join("\n"),
       );
     }
 

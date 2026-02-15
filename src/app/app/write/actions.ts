@@ -188,6 +188,40 @@ export async function getPostVersions(postId: string) {
   return data;
 }
 
+export async function deletePost(postId: string) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error("Not authenticated");
+
+  // Delete versions first
+  await supabase
+    .from("post_versions")
+    .delete()
+    .eq("post_id", postId)
+    .eq("user_id", user.id);
+
+  // Delete analytics
+  await supabase
+    .from("post_analytics")
+    .delete()
+    .eq("post_id", postId)
+    .eq("user_id", user.id);
+
+  // Delete the post
+  const { error } = await supabase
+    .from("posts")
+    .delete()
+    .eq("id", postId)
+    .eq("user_id", user.id);
+
+  if (error) throw error;
+  revalidatePath("/app/write");
+  revalidatePath("/app/calendar");
+  revalidatePath("/app/posts");
+}
+
 export async function markAsPosted(postId: string, linkedinUrl?: string) {
   const supabase = await createClient();
   const {

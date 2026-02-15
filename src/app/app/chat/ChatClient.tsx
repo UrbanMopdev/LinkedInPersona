@@ -11,6 +11,8 @@ import {
   PanelLeft,
   AlertCircle,
   Loader2,
+  CalendarPlus,
+  CheckCircle2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -29,6 +31,67 @@ interface Conversation {
   updated_at: string;
 }
 
+interface ParsedPost {
+  title: string;
+  pillar: string;
+  platform: string;
+  post_type: string;
+  target_icp: string;
+  tags: string[];
+  status: string;
+  notes: string;
+  content: string;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Parse ```post block from assistant message                         */
+/* ------------------------------------------------------------------ */
+
+function parsePostBlock(text: string): ParsedPost | null {
+  const match = text.match(/```post\s*\n([\s\S]*?)```/);
+  if (!match) return null;
+
+  const block = match[1];
+  const lines = block.split("\n");
+  const meta: Record<string, string> = {};
+  let contentStartIdx = -1;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (line === "---") {
+      contentStartIdx = i + 1;
+      break;
+    }
+    const colonIdx = line.indexOf(":");
+    if (colonIdx > 0) {
+      const key = line.slice(0, colonIdx).trim().toUpperCase();
+      const value = line.slice(colonIdx + 1).trim();
+      meta[key] = value;
+    }
+  }
+
+  const content =
+    contentStartIdx > 0
+      ? lines.slice(contentStartIdx).join("\n").trim()
+      : "";
+
+  if (!content) return null;
+
+  return {
+    title: meta["TITLE"] || "",
+    pillar: meta["PILLAR"] || "",
+    platform: meta["PLATFORM"] || "LinkedIn",
+    post_type: meta["POST_TYPE"] || "",
+    target_icp: meta["TARGET_ICP"] || "",
+    tags: meta["TAGS"]
+      ? meta["TAGS"].split(",").map((t) => t.trim()).filter(Boolean)
+      : [],
+    status: (meta["STATUS"] || "draft").toLowerCase(),
+    notes: meta["NOTES"] || "",
+    content,
+  };
+}
+
 /* ------------------------------------------------------------------ */
 /*  Component                                                          */
 /* ------------------------------------------------------------------ */
@@ -38,6 +101,8 @@ export default function ChatClient() {
   const [inputValue, setInputValue] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
+  const [savedPostIds, setSavedPostIds] = useState<Set<number>>(new Set());
+  const [savingPostIdx, setSavingPostIdx] = useState<number | null>(null);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [showSidebar, setShowSidebar] = useState(true);
@@ -127,6 +192,25 @@ export default function ChatClient() {
     }
   }
 
+  async function handleSavePost(parsed: ParsedPost, msgIndex: number) {
+    setSavingPostIdx(msgIndex);
+    setError("");
+    try {
+      const res = await fetch("/api/chat/save-post", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(parsed),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to save post");
+      setSavedPostIds((prev) => new Set(prev).add(msgIndex));
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Failed to save post");
+    } finally {
+      setSavingPostIdx(null);
+    }
+  }
+
   return (
     <div className="flex h-[calc(100vh-3.5rem)]">
       {/* ---- Sidebar ---- */}
@@ -210,26 +294,57 @@ export default function ChatClient() {
             )}
 
             <div className="space-y-4">
-              {messages.map((msg, i) => (
-                <div
-                  key={i}
-                  className={cn(
-                    "flex",
-                    msg.role === "user" ? "justify-end" : "justify-start"
-                  )}
-                >
+              {messages.map((msg, i) => {
+                const parsed =
+                  msg.role === "assistant"
+                    ? parsePostBlock(msg.content)
+                    : null;
+
+                return (
                   <div
+                    key={i}
                     className={cn(
-                      "max-w-[80%] rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap break-words",
-                      msg.role === "user"
-                        ? "bg-primary text-primary-foreground rounded-br-md"
-                        : "bg-muted text-foreground rounded-bl-md"
+                      "flex flex-col",
+                      msg.role === "user" ? "items-end" : "items-start"
                     )}
                   >
-                    {msg.content}
+                    <div
+                      className={cn(
+                        "max-w-[80%] rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap break-words",
+                        msg.role === "user"
+                          ? "bg-primary text-primary-foreground rounded-br-md"
+                          : "bg-muted text-foreground rounded-bl-md"
+                      )}
+                    >
+                      {msg.content}
+                    </div>
+                    {parsed && (
+                      <div className="mt-2">
+                        {savedPostIds.has(i) ? (
+                          <div className="flex items-center gap-1.5 text-sm text-emerald-600">
+                            <CheckCircle2 className="h-4 w-4" />
+                            Added to Calendar
+                          </div>
+                        ) : (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleSavePost(parsed, i)}
+                            disabled={savingPostIdx === i}
+                          >
+                            {savingPostIdx === i ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
+                            ) : (
+                              <CalendarPlus className="h-3.5 w-3.5 mr-1.5" />
+                            )}
+                            Add to Calendar
+                          </Button>
+                        )}
+                      </div>
+                    )}
                   </div>
-                </div>
-              ))}
+                );
+              })}
 
               {isLoading && (
                 <div className="flex justify-start">

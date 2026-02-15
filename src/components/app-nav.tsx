@@ -5,12 +5,10 @@ import { usePathname } from "next/navigation";
 import {
   PenLine,
   MessageSquare,
-  FileText,
   Settings,
   LogOut,
   Menu,
   X,
-  Lightbulb,
   CalendarDays,
   BarChart3,
 } from "lucide-react";
@@ -19,10 +17,8 @@ import { Button } from "@/components/ui/button";
 import { useState } from "react";
 
 const navItems = [
-  { href: "/app/ideas", label: "Ideas", icon: Lightbulb },
   { href: "/app/write", label: "Write", icon: PenLine },
   { href: "/app/calendar", label: "Calendar", icon: CalendarDays },
-  { href: "/app/posts", label: "Posts", icon: FileText },
   { href: "/app/reports", label: "Reports", icon: BarChart3 },
   { href: "/app/chat", label: "Chat", icon: MessageSquare },
   { href: "/app/settings", label: "Settings", icon: Settings },
