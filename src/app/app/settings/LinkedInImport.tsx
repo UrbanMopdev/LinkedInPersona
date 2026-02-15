@@ -44,6 +44,7 @@ interface ImportPreview {
   positioningSummary: string | null;
   voiceFingerprint: string | null;
   memoryChunksStored: number;
+  fetchReturnedNoData?: boolean;
 }
 
 interface LinkedInImportProps {
@@ -67,16 +68,23 @@ export default function LinkedInImport({
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [showPasteFallback, setShowPasteFallback] = useState(false);
   const [pastedPosts, setPastedPosts] = useState("");
+  const [manualHeadline, setManualHeadline] = useState("");
+  const [manualAbout, setManualAbout] = useState("");
+  const [manualExperience, setManualExperience] = useState("");
   const [step, setStep] = useState<
-    "input" | "importing" | "preview" | "done"
+    "input" | "importing" | "preview" | "manual" | "done"
   >(lastImportedAt ? "done" : "input");
   const [showDetails, setShowDetails] = useState(false);
 
   /* ---- Run import ---- */
-  async function handleImport(usePasted = false) {
+  async function handleImport(options?: {
+    usePasted?: boolean;
+    useManual?: boolean;
+  }) {
+    const { usePasted = false, useManual = false } = options || {};
     setError("");
     setIsImporting(true);
-    setStep("importing");
+    if (!useManual) setStep("importing");
 
     const payload: Record<string, unknown> = {};
     if (input.trim()) payload.input = input.trim();
@@ -86,6 +94,20 @@ export default function LinkedInImport({
         .split(/\n{2,}/)
         .map((p) => p.trim())
         .filter((p) => p.length > 20);
+    }
+    if (useManual) {
+      payload.manualProfile = {
+        headline: manualHeadline.trim() || undefined,
+        about: manualAbout.trim() || undefined,
+        experience: manualExperience.trim() || undefined,
+      };
+      // Also include pasted posts if present
+      if (pastedPosts.trim()) {
+        payload.pastedPosts = pastedPosts
+          .split(/\n{2,}/)
+          .map((p) => p.trim())
+          .filter((p) => p.length > 20);
+      }
     }
 
     try {
@@ -100,19 +122,28 @@ export default function LinkedInImport({
         throw new Error(data.error || "Import failed");
       }
 
+      // If auto-fetch returned nothing, prompt manual entry
+      if (data.preview?.fetchReturnedNoData && !useManual) {
+        setPreview(null);
+        setStep("manual");
+        return;
+      }
+
       setPreview(data.preview);
       setStep("preview");
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Import failed";
       setError(msg);
-      setStep("input");
-      // If posts not found, suggest paste fallback
+      setStep(useManual ? "manual" : "input");
+      // If blocked, go straight to manual entry
       if (
         msg.includes("private") ||
         msg.includes("403") ||
-        msg.includes("999")
+        msg.includes("999") ||
+        msg.includes("auth wall")
       ) {
-        setShowPasteFallback(true);
+        setStep("manual");
+        setError("");
       }
     } finally {
       setIsImporting(false);
@@ -196,12 +227,12 @@ export default function LinkedInImport({
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) =>
-                  e.key === "Enter" && !isImporting && handleImport()
+                  e.key === "Enter" && !isImporting && handleImport({})
                 }
                 disabled={isImporting}
               />
               <Button
-                onClick={() => handleImport()}
+                onClick={() => handleImport({})}
                 disabled={isImporting || !input.trim()}
               >
                 {isImporting ? (
@@ -262,7 +293,7 @@ export default function LinkedInImport({
                 />
                 <Button
                   variant="outline"
-                  onClick={() => handleImport(true)}
+                  onClick={() => handleImport({ usePasted: true })}
                   disabled={isImporting || !pastedPosts.trim()}
                 >
                   <ClipboardPaste className="h-4 w-4 mr-2" />
@@ -271,6 +302,110 @@ export default function LinkedInImport({
               </div>
             )}
           </>
+        )}
+
+        {/* ---- Manual entry step (when auto-fetch fails) ---- */}
+        {step === "manual" && (
+          <div className="space-y-4 animate-fade-in">
+            <div className="rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800 mb-2">
+              <p className="font-medium">
+                LinkedIn blocked the automatic import
+              </p>
+              <p className="text-xs mt-1">
+                Copy your profile details from LinkedIn and paste them below.
+                Open your{" "}
+                <a
+                  href={input.trim() ? `https://www.linkedin.com/in/${input.trim().replace(/^@/, "").replace(/^https?:\/\/(www\.)?linkedin\.com\/in\//, "")}` : "https://www.linkedin.com"}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline font-medium"
+                >
+                  LinkedIn profile
+                </a>{" "}
+                in another tab to copy from.
+              </p>
+            </div>
+
+            <div>
+              <label className="text-sm font-medium mb-1 block">
+                Headline
+              </label>
+              <Input
+                placeholder="e.g. VP of Marketing at Acme Corp | Growth Strategy"
+                value={manualHeadline}
+                onChange={(e) => setManualHeadline(e.target.value)}
+              />
+            </div>
+
+            <div>
+              <label className="text-sm font-medium mb-1 block">
+                About
+              </label>
+              <Textarea
+                className="min-h-[100px]"
+                placeholder="Paste your LinkedIn About section here..."
+                value={manualAbout}
+                onChange={(e) => setManualAbout(e.target.value)}
+              />
+            </div>
+
+            <div>
+              <label className="text-sm font-medium mb-1 block">
+                Experience
+              </label>
+              <Textarea
+                className="min-h-[80px]"
+                placeholder={"One role per line, e.g.:\nVP Marketing at Acme Corp\nSenior Manager at StartupXYZ"}
+                value={manualExperience}
+                onChange={(e) => setManualExperience(e.target.value)}
+              />
+            </div>
+
+            <div>
+              <label className="text-sm font-medium mb-1 block">
+                Posts{" "}
+                <span className="text-muted-foreground font-normal">
+                  (optional — separate each post with a blank line)
+                </span>
+              </label>
+              <Textarea
+                className="min-h-[120px]"
+                placeholder={
+                  "Paste your LinkedIn posts here.\n\nSeparate each post with a blank line.\n\n--- Example ---\nJust shipped our new feature...\n\nHere's what I learned about leadership..."
+                }
+                value={pastedPosts}
+                onChange={(e) => setPastedPosts(e.target.value)}
+              />
+            </div>
+
+            <div className="flex items-center gap-3">
+              <Button
+                onClick={() => handleImport({ useManual: true })}
+                disabled={
+                  isImporting ||
+                  (!manualHeadline.trim() &&
+                    !manualAbout.trim() &&
+                    !manualExperience.trim() &&
+                    !pastedPosts.trim())
+                }
+              >
+                {isImporting ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Importing...
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="h-4 w-4 mr-2" />
+                    Import profile
+                  </>
+                )}
+              </Button>
+              <Button variant="outline" onClick={handleReimport}>
+                Back
+              </Button>
+            </div>
+          </div>
         )}
 
         {/* ---- Preview step ---- */}

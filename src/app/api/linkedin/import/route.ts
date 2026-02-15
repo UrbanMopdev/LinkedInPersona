@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { generateEmbedding } from "@/lib/embeddings";
 import {
   normalizeLinkedInUrl,
+  fetchViaProxycurl,
   fetchLinkedInHtml,
   parseLinkedInHtml,
   cleanText,
@@ -31,14 +32,23 @@ export async function POST(req: Request) {
   }
 
   const body = await req.json();
-  const { input, pastedPosts } = body as {
+  const { input, pastedPosts, manualProfile } = body as {
     input?: string;
     pastedPosts?: string[];
+    manualProfile?: {
+      headline?: string;
+      about?: string;
+      experience?: string;
+    };
   };
 
-  if (!input && (!pastedPosts || pastedPosts.length === 0)) {
+  if (
+    !input &&
+    (!pastedPosts || pastedPosts.length === 0) &&
+    !manualProfile
+  ) {
     return Response.json(
-      { error: "Provide a LinkedIn handle/URL or pasted posts." },
+      { error: "Provide a LinkedIn handle/URL, pasted posts, or profile info." },
       { status: 400 },
     );
   }
@@ -51,24 +61,36 @@ export async function POST(req: Request) {
     let canonicalUrl: string | null = null;
 
     /* ============================================================ */
-    /*  Strategy A: Fetch & parse public profile                     */
+    /*  Strategy A: Proxycurl API (primary)                          */
     /* ============================================================ */
     if (input) {
       canonicalUrl = normalizeLinkedInUrl(input);
 
-      let html: string | null = null;
+      // Try Proxycurl first (reliable when API key is configured)
       try {
-        html = await fetchLinkedInHtml(canonicalUrl);
+        const proxycurlResult = await fetchViaProxycurl(canonicalUrl);
+        if (proxycurlResult) {
+          headline = proxycurlResult.headline;
+          about = proxycurlResult.about;
+          experience = proxycurlResult.experience;
+          postTexts = proxycurlResult.posts;
+        }
       } catch {
-        // Fetch failed — will still work if user provided pastedPosts
+        // Proxycurl failed — fall through to direct fetch
       }
 
-      if (html) {
-        const parsed = parseLinkedInHtml(html);
-        headline = parsed.headline;
-        about = parsed.about;
-        experience = parsed.experience;
-        postTexts = parsed.posts;
+      // Fallback: direct HTML fetch (often blocked by LinkedIn auth wall)
+      if (!headline && !about && experience.length === 0) {
+        try {
+          const html = await fetchLinkedInHtml(canonicalUrl);
+          const parsed = parseLinkedInHtml(html);
+          headline = parsed.headline;
+          about = parsed.about;
+          experience = parsed.experience;
+          postTexts = parsed.posts;
+        } catch {
+          // Direct fetch also failed — will still work with pastedPosts / manualProfile
+        }
       }
     }
 
@@ -84,6 +106,43 @@ export async function POST(req: Request) {
       for (const p of cleaned) {
         if (!existingSet.has(p)) {
           postTexts.push(p);
+        }
+      }
+    }
+
+    /* ============================================================ */
+    /*  Strategy C: Manual profile entry (fallback)                  */
+    /* ============================================================ */
+    if (manualProfile) {
+      if (manualProfile.headline && !headline) {
+        headline = cleanText(manualProfile.headline);
+      }
+      if (manualProfile.about && !about) {
+        about = cleanText(manualProfile.about);
+      }
+      if (manualProfile.experience && experience.length === 0) {
+        // Parse free-text experience: each line is "Title at Company"
+        const lines = manualProfile.experience
+          .split("\n")
+          .map((l) => l.trim())
+          .filter((l) => l.length > 3);
+        for (const line of lines) {
+          const atMatch = line.match(/^(.+?)\s+at\s+(.+)$/i);
+          if (atMatch) {
+            experience.push({
+              title: atMatch[1].trim(),
+              company: atMatch[2].trim(),
+              duration: "",
+              description: "",
+            });
+          } else {
+            experience.push({
+              title: line,
+              company: "",
+              duration: "",
+              description: "",
+            });
+          }
         }
       }
     }
@@ -255,6 +314,10 @@ export async function POST(req: Request) {
     /* ============================================================ */
     /*  Return preview payload                                       */
     /* ============================================================ */
+    // Determine if the auto-fetch got no data (user should try manual entry)
+    const fetchReturnedNoData =
+      !!input && !headline && !about && experience.length === 0 && postTexts.length === 0;
+
     return Response.json({
       success: true,
       preview: {
@@ -272,6 +335,7 @@ export async function POST(req: Request) {
             (voiceFingerprint.length > 500 ? "..." : "")
           : null,
         memoryChunksStored: memoryChunks.length,
+        fetchReturnedNoData,
       },
     });
   } catch (e: unknown) {

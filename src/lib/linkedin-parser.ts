@@ -1,9 +1,9 @@
 /**
- * LinkedIn public profile HTML parser.
+ * LinkedIn profile data fetcher.
  *
- * LinkedIn's public pages expose structured data in JSON-LD and various
- * meta / section patterns. We try multiple extraction strategies and
- * fall back gracefully when data isn't available.
+ * Primary strategy: Proxycurl API (reliable, requires API key).
+ * Fallback: direct HTML fetch (rarely works — LinkedIn blocks most
+ * server-side requests with auth walls).
  */
 
 /* ------------------------------------------------------------------ */
@@ -72,6 +72,73 @@ export function extractHandle(canonicalUrl: string): string {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Proxycurl API (primary strategy)                                   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Fetch profile data via the Proxycurl API.
+ * Requires PROXYCURL_API_KEY env var.
+ * Returns null if the key is missing or the request fails.
+ *
+ * API docs: https://nubela.co/proxycurl/docs#people-api-person-profile-endpoint
+ */
+export async function fetchViaProxycurl(
+  canonicalUrl: string,
+): Promise<LinkedInParseResult | null> {
+  const apiKey = process.env.PROXYCURL_API_KEY;
+  if (!apiKey) return null;
+
+  const params = new URLSearchParams({
+    linkedin_profile_url: canonicalUrl,
+    use_cache: "if-recent",
+    fallback_to_cache: "on-error",
+  });
+
+  const res = await fetch(
+    `https://nubela.co/proxycurl/api/v2/linkedin?${params}`,
+    {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    },
+  );
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(
+      `Proxycurl returned ${res.status}: ${body.slice(0, 200)}`,
+    );
+  }
+
+  const data = await res.json();
+
+  // Map Proxycurl response → our standard shape
+  const headline: string | null = data.headline || data.occupation || null;
+  const about: string | null = data.summary || null;
+
+  const experience: LinkedInExperience[] = [];
+  if (Array.isArray(data.experiences)) {
+    for (const exp of data.experiences) {
+      const startDate = exp.starts_at
+        ? `${exp.starts_at.month || ""}/${exp.starts_at.year || ""}`
+        : "";
+      const endDate = exp.ends_at
+        ? `${exp.ends_at.month || ""}/${exp.ends_at.year || ""}`
+        : "Present";
+      experience.push({
+        title: exp.title || "",
+        company: exp.company || "",
+        duration: startDate ? `${startDate} – ${endDate}` : "",
+        description: exp.description || "",
+      });
+    }
+  }
+
+  // Proxycurl doesn't return post content in the person-profile endpoint
+  const posts: string[] = [];
+
+  return { headline, about, experience, posts };
+}
+
+/* ------------------------------------------------------------------ */
 /*  Text cleaning                                                      */
 /* ------------------------------------------------------------------ */
 
@@ -130,7 +197,41 @@ export async function fetchLinkedInHtml(
     );
   }
 
-  return res.text();
+  const html = await res.text();
+
+  // Detect auth wall — LinkedIn returns 200 with a login page
+  if (isAuthWall(html)) {
+    throw new Error(
+      "LinkedIn returned an auth wall instead of profile data. " +
+        "Direct HTML fetching is blocked. Use Proxycurl API or paste profile data manually.",
+    );
+  }
+
+  return html;
+}
+
+/**
+ * Check if the returned HTML is an auth wall / login page
+ * rather than actual profile data.
+ */
+function isAuthWall(html: string): boolean {
+  const markers = [
+    "sign in",
+    "authwall",
+    "auth_wall",
+    "login-form",
+    "join now",
+    'action="/uas/login',
+    "uas/login-submit",
+    "session_redirect",
+  ];
+  const lower = html.toLowerCase();
+  // If the page has multiple auth markers and no JSON-LD Person data, it's an auth wall
+  const authHits = markers.filter((m) => lower.includes(m)).length;
+  const hasJsonLd =
+    lower.includes('"@type":"person"') ||
+    lower.includes('"@type": "person"');
+  return authHits >= 2 && !hasJsonLd;
 }
 
 /* ------------------------------------------------------------------ */
