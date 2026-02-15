@@ -13,6 +13,32 @@ import {
 } from "./property-map";
 
 /* ------------------------------------------------------------------ */
+/*  Error helper                                                       */
+/* ------------------------------------------------------------------ */
+
+function errorToString(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (
+    typeof err === "object" &&
+    err !== null &&
+    "message" in err &&
+    typeof (err as { message: unknown }).message === "string"
+  ) {
+    // Supabase PostgrestError, Notion APIResponseError, etc.
+    const obj = err as { message: string; details?: string; code?: string };
+    const parts = [obj.message];
+    if (obj.details) parts.push(obj.details);
+    if (obj.code) parts.push(`(code: ${obj.code})`);
+    return parts.join(" – ");
+  }
+  try {
+    return JSON.stringify(err);
+  } catch {
+    return String(err);
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /*  Types                                                              */
 /* ------------------------------------------------------------------ */
 
@@ -129,7 +155,7 @@ export async function fullSync(
         true // isFullSync
       );
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = errorToString(err);
       result.errors.push(`Page ${(page as { id: string }).id}: ${msg}`);
     }
   }
@@ -189,7 +215,7 @@ export async function incrementalNotionToApp(
         false
       );
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = errorToString(err);
       result.errors.push(`Page ${(page as { id: string }).id}: ${msg}`);
     }
   }
@@ -240,7 +266,7 @@ export async function incrementalAppToNotion(
     try {
       await pushPostToNotion(supabase, notion, syncState, post, result);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = errorToString(err);
       result.errors.push(`Post ${post.id}: ${msg}`);
       await supabase
         .from("posts")
@@ -287,7 +313,7 @@ export async function pushSinglePost(
   try {
     await pushPostToNotion(supabase, notion, syncState, post, result);
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = errorToString(err);
     result.errors.push(msg);
     await supabase
       .from("posts")
@@ -554,7 +580,7 @@ async function pushPostToNotion(
 
     const newPage = await notionRequest(() =>
       notion.pages.create({
-        parent: { database_id: syncState.notion_database_id },
+        parent: { data_source_id: syncState.notion_database_id },
         properties,
       })
     );

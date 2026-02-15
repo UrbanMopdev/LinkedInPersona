@@ -84,7 +84,7 @@ export async function POST(req: NextRequest) {
         );
     }
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Sync failed";
+    const message = err instanceof Error ? err.message : typeof err === "object" && err !== null && "message" in err ? String((err as { message: unknown }).message) : "Sync failed";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
@@ -124,7 +124,7 @@ async function handleFullSync(
 
     return NextResponse.json({ success: true, result });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Full sync failed";
+    const message = err instanceof Error ? err.message : typeof err === "object" && err !== null && "message" in err ? String((err as { message: unknown }).message) : "Full sync failed";
     await logSyncEvent(
       supabase,
       userId,
@@ -192,7 +192,7 @@ async function handleIncremental(
     });
   } catch (err) {
     const message =
-      err instanceof Error ? err.message : "Incremental sync failed";
+      err instanceof Error ? err.message : typeof err === "object" && err !== null && "message" in err ? String((err as { message: unknown }).message) : "Incremental sync failed";
     await logSyncEvent(
       supabase,
       userId,
@@ -282,7 +282,7 @@ async function handleCronSyncAll(supabase: any) {
         startedAt
       );
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = err instanceof Error ? err.message : typeof err === "object" && err !== null && "message" in err ? String((err as { message: unknown }).message) : String(err);
       results.push({ userId: syncState.user_id, error: msg });
 
       await supabase

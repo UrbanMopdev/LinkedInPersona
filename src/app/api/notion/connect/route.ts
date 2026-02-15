@@ -45,7 +45,7 @@ export async function POST(req: NextRequest) {
         );
     }
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Internal error";
+    const message = err instanceof Error ? err.message : typeof err === "object" && err !== null && "message" in err ? String((err as { message: unknown }).message) : "Internal error";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
