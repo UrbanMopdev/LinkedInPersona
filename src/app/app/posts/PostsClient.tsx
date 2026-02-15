@@ -6,6 +6,7 @@ import {
   getPostVersions,
   markAsPosted,
 } from "../write/actions";
+import { upsertAnalytics, getPostAnalytics } from "../actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
@@ -27,6 +28,11 @@ import {
   AlertTriangle,
   Database,
   Loader2,
+  Eye,
+  Heart,
+  MessageSquare,
+  Save,
+  BarChart3,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -38,12 +44,15 @@ interface Post {
   id: string;
   user_id: string;
   idea_id: string | null;
+  title: string | null;
   content: string;
   status: string;
   scheduled_at: string | null;
   published_at: string | null;
   linkedin_post_id: string | null;
   linkedin_url: string | null;
+  pillar: string | null;
+  tags: string[] | null;
   notion_page_id: string | null;
   sync_status: string | null;
   source_of_truth: string | null;
@@ -76,6 +85,9 @@ export default function PostsClient() {
     type: "success" | "error";
     text: string;
   } | null>(null);
+  const [expandedMetrics, setExpandedMetrics] = useState<string | null>(null);
+  const [metricsData, setMetricsData] = useState<Record<string, { impressions: number; likes: number; comments: number }>>({});
+  const [filterStatus, setFilterStatus] = useState<"all" | "draft" | "scheduled" | "published">("all");
 
   const loadPosts = useCallback(async () => {
     try {
@@ -121,6 +133,43 @@ export default function PostsClient() {
     }
   }
 
+  async function handleToggleMetrics(postId: string) {
+    if (expandedMetrics === postId) {
+      setExpandedMetrics(null);
+      return;
+    }
+    setExpandedMetrics(postId);
+    // Load existing metrics
+    try {
+      const data = await getPostAnalytics(postId);
+      if (data) {
+        setMetricsData((prev) => ({
+          ...prev,
+          [postId]: {
+            impressions: data.impressions || 0,
+            likes: data.likes || 0,
+            comments: data.comments || 0,
+          },
+        }));
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  async function handleSaveMetrics(postId: string) {
+    const metrics = metricsData[postId];
+    if (!metrics) return;
+    setMessage(null);
+    try {
+      await upsertAnalytics(postId, metrics);
+      setMessage({ type: "success", text: "Metrics saved" });
+      setTimeout(() => setMessage(null), 2000);
+    } catch (e: unknown) {
+      setMessage({ type: "error", text: e instanceof Error ? e.message : "Failed to save metrics" });
+    }
+  }
+
   const statusBadge = (status: string) => {
     switch (status) {
       case "published":
@@ -132,21 +181,38 @@ export default function PostsClient() {
     }
   };
 
-  const draftPosts = posts.filter((p) => p.status === "draft");
-  const publishedPosts = posts.filter((p) => p.status === "published");
+  const filtered = filterStatus === "all"
+    ? posts
+    : posts.filter((p) => p.status === filterStatus);
+
+  const draftPosts = filtered.filter((p) => p.status === "draft");
+  const scheduledPosts = filtered.filter((p) => p.status === "scheduled");
+  const publishedPosts = filtered.filter((p) => p.status === "published");
 
   return (
     <div className="mx-auto max-w-container px-6 py-8">
       <PageHeader
         title="Posts"
-        description="Manage your drafts and published LinkedIn posts."
+        description="Manage your drafts, scheduled, and published LinkedIn posts."
       >
-        <Link href="/app/write">
-          <Button>
-            <PenLine className="h-4 w-4 mr-2" />
-            New Post
-          </Button>
-        </Link>
+        <div className="flex items-center gap-2">
+          <select
+            className="text-sm border rounded-lg px-3 py-1.5 bg-background"
+            value={filterStatus}
+            onChange={(e) => setFilterStatus(e.target.value as typeof filterStatus)}
+          >
+            <option value="all">All ({posts.length})</option>
+            <option value="draft">Drafts ({posts.filter((p) => p.status === "draft").length})</option>
+            <option value="scheduled">Scheduled ({posts.filter((p) => p.status === "scheduled").length})</option>
+            <option value="published">Published ({posts.filter((p) => p.status === "published").length})</option>
+          </select>
+          <Link href="/app/write">
+            <Button>
+              <PenLine className="h-4 w-4 mr-2" />
+              New Post
+            </Button>
+          </Link>
+        </div>
       </PageHeader>
 
       {message && (
@@ -203,11 +269,61 @@ export default function PostsClient() {
                     expandedVersions={expandedVersions}
                     versions={versions}
                     linkedinUrls={linkedinUrls}
+                    expandedMetrics={expandedMetrics}
+                    metricsData={metricsData}
                     onToggleVersions={handleToggleVersions}
                     onLinkedinUrlChange={(id, url) =>
                       setLinkedinUrls((prev) => ({ ...prev, [id]: url }))
                     }
                     onMarkPosted={handleMarkPosted}
+                    onToggleMetrics={handleToggleMetrics}
+                    onMetricsChange={(id, field, value) =>
+                      setMetricsData((prev) => ({
+                        ...prev,
+                        [id]: { ...prev[id], [field]: value },
+                      }))
+                    }
+                    onSaveMetrics={handleSaveMetrics}
+                  />
+                ))}
+              </div>
+            </section>
+          )}
+
+          {/* Scheduled section */}
+          {scheduledPosts.length > 0 && (
+            <section>
+              <h2 className="text-h3 mb-4 flex items-center gap-2">
+                <Clock className="h-5 w-5 text-amber-500" />
+                Scheduled
+                <span className="text-sm font-normal text-muted-foreground">
+                  ({scheduledPosts.length})
+                </span>
+              </h2>
+              <div className="space-y-3">
+                {scheduledPosts.map((post) => (
+                  <PostCard
+                    key={post.id}
+                    post={post}
+                    statusBadge={statusBadge}
+                    expandedVersions={expandedVersions}
+                    versions={versions}
+                    linkedinUrls={linkedinUrls}
+                    expandedMetrics={expandedMetrics}
+                    metricsData={metricsData}
+                    onToggleVersions={handleToggleVersions}
+                    onLinkedinUrlChange={(id, url) =>
+                      setLinkedinUrls((prev) => ({ ...prev, [id]: url }))
+                    }
+                    onMarkPosted={handleMarkPosted}
+                    onToggleMetrics={handleToggleMetrics}
+                    onMetricsChange={(id, field, value) =>
+                      setMetricsData((prev) => ({
+                        ...prev,
+                        [id]: { ...prev[id], [field]: value },
+                      }))
+                    }
+                    onSaveMetrics={handleSaveMetrics}
                   />
                 ))}
               </div>
@@ -233,11 +349,21 @@ export default function PostsClient() {
                     expandedVersions={expandedVersions}
                     versions={versions}
                     linkedinUrls={linkedinUrls}
+                    expandedMetrics={expandedMetrics}
+                    metricsData={metricsData}
                     onToggleVersions={handleToggleVersions}
                     onLinkedinUrlChange={(id, url) =>
                       setLinkedinUrls((prev) => ({ ...prev, [id]: url }))
                     }
                     onMarkPosted={handleMarkPosted}
+                    onToggleMetrics={handleToggleMetrics}
+                    onMetricsChange={(id, field, value) =>
+                      setMetricsData((prev) => ({
+                        ...prev,
+                        [id]: { ...prev[id], [field]: value },
+                      }))
+                    }
+                    onSaveMetrics={handleSaveMetrics}
                   />
                 ))}
               </div>
@@ -259,21 +385,33 @@ function PostCard({
   expandedVersions,
   versions,
   linkedinUrls,
+  expandedMetrics,
+  metricsData,
   onToggleVersions,
   onLinkedinUrlChange,
   onMarkPosted,
+  onToggleMetrics,
+  onMetricsChange,
+  onSaveMetrics,
 }: {
   post: Post;
   statusBadge: (status: string) => "success" | "warning" | "secondary";
   expandedVersions: string | null;
   versions: PostVersion[];
   linkedinUrls: Record<string, string>;
+  expandedMetrics: string | null;
+  metricsData: Record<string, { impressions: number; likes: number; comments: number }>;
   onToggleVersions: (id: string) => void;
   onLinkedinUrlChange: (id: string, url: string) => void;
   onMarkPosted: (id: string) => void;
+  onToggleMetrics: (id: string) => void;
+  onMetricsChange: (id: string, field: string, value: number) => void;
+  onSaveMetrics: (id: string) => void;
 }) {
   const isExpanded = expandedVersions === post.id;
+  const isMetricsOpen = expandedMetrics === post.id;
   const [pushing, setPushing] = useState(false);
+  const metrics = metricsData[post.id] || { impressions: 0, likes: 0, comments: 0 };
 
   async function handlePushToNotion() {
     setPushing(true);
@@ -314,6 +452,9 @@ function PostCard({
         {/* Header */}
         <div className="flex items-start justify-between gap-4 mb-3">
           <div className="flex-1 min-w-0">
+            {post.title && (
+              <p className="text-sm font-semibold mb-1">{post.title}</p>
+            )}
             <div className="flex items-center gap-2 mb-1 flex-wrap">
               <Badge variant={statusBadge(post.status)}>{post.status}</Badge>
               {post.notion_page_id && (
@@ -330,6 +471,9 @@ function PostCard({
                   {post.sync_status}
                 </Badge>
               )}
+              {post.pillar && (
+                <Badge variant="outline" className="text-xs">{post.pillar}</Badge>
+              )}
               {post.ideas?.title && (
                 <span className="text-xs text-muted-foreground">
                   From: {post.ideas.title}
@@ -341,8 +485,24 @@ function PostCard({
                 Published {new Date(post.published_at).toLocaleDateString()}
               </p>
             )}
+            {post.scheduled_at && post.status === "scheduled" && (
+              <p className="text-xs text-muted-foreground">
+                Scheduled for {new Date(post.scheduled_at).toLocaleDateString()}
+              </p>
+            )}
           </div>
           <div className="flex items-center gap-2 shrink-0">
+            {post.status === "published" && (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => onToggleMetrics(post.id)}
+                className="text-muted-foreground"
+                title="Performance metrics"
+              >
+                <BarChart3 className="h-4 w-4" />
+              </Button>
+            )}
             {post.status === "draft" && (
               <Link href="/app/write">
                 <Button size="sm" variant="outline">
@@ -371,6 +531,17 @@ function PostCard({
           {post.content.length > 200 ? "..." : ""}
         </p>
 
+        {/* Tags */}
+        {post.tags && post.tags.length > 0 && (
+          <div className="flex flex-wrap gap-1 mb-3">
+            {post.tags.map((tag) => (
+              <Badge key={tag} variant="secondary" className="text-xs">
+                {tag}
+              </Badge>
+            ))}
+          </div>
+        )}
+
         {/* LinkedIn URL */}
         {post.linkedin_url && (
           <a
@@ -382,6 +553,58 @@ function PostCard({
             <ExternalLink className="h-3 w-3" />
             View on LinkedIn
           </a>
+        )}
+
+        {/* Metrics entry (for published posts) */}
+        {isMetricsOpen && post.status === "published" && (
+          <>
+            <Separator className="my-3" />
+            <div className="bg-muted/50 rounded-lg p-4">
+              <h4 className="text-sm font-semibold mb-3 flex items-center gap-2">
+                <BarChart3 className="h-4 w-4" />
+                Performance Metrics
+              </h4>
+              <div className="grid grid-cols-3 gap-3 mb-3">
+                <div>
+                  <label className="text-xs text-muted-foreground flex items-center gap-1 mb-1">
+                    <Eye className="h-3 w-3" /> Impressions
+                  </label>
+                  <Input
+                    type="number"
+                    value={metrics.impressions}
+                    onChange={(e) => onMetricsChange(post.id, "impressions", parseInt(e.target.value) || 0)}
+                    className="h-8 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground flex items-center gap-1 mb-1">
+                    <Heart className="h-3 w-3" /> Likes
+                  </label>
+                  <Input
+                    type="number"
+                    value={metrics.likes}
+                    onChange={(e) => onMetricsChange(post.id, "likes", parseInt(e.target.value) || 0)}
+                    className="h-8 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground flex items-center gap-1 mb-1">
+                    <MessageSquare className="h-3 w-3" /> Comments
+                  </label>
+                  <Input
+                    type="number"
+                    value={metrics.comments}
+                    onChange={(e) => onMetricsChange(post.id, "comments", parseInt(e.target.value) || 0)}
+                    className="h-8 text-sm"
+                  />
+                </div>
+              </div>
+              <Button size="sm" onClick={() => onSaveMetrics(post.id)}>
+                <Save className="h-3.5 w-3.5 mr-1.5" />
+                Save Metrics
+              </Button>
+            </div>
+          </>
         )}
 
         {/* Mark as posted */}
@@ -404,7 +627,7 @@ function PostCard({
 
         {/* Notion sync info */}
         {post.notion_page_id && post.notion_last_synced_at && (
-          <p className="text-xs text-muted-foreground mb-2">
+          <p className="text-xs text-muted-foreground mb-2 mt-2">
             <Database className="h-3 w-3 inline mr-1" />
             Last synced {new Date(post.notion_last_synced_at).toLocaleString()}
             {post.source_of_truth && post.source_of_truth !== "app" && (
@@ -420,7 +643,7 @@ function PostCard({
           <Button
             size="sm"
             variant="outline"
-            className="mb-3"
+            className="mb-3 mt-2"
             onClick={handlePushToNotion}
             disabled={pushing}
           >
