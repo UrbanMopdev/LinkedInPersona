@@ -373,7 +373,9 @@ export async function resolveConflict(
         target_icp: extracted.target_icp || post.target_icp,
         tags: extracted.tags,
         notes: extracted.notes,
-        linkedin_url: extracted.linkedin_url || post.linkedin_url,
+        ...(extracted.linkedin_url || post.linkedin_url
+          ? { linkedin_url: extracted.linkedin_url || post.linkedin_url }
+          : {}),
         sync_status: "synced",
         notion_last_synced_at: new Date().toISOString(),
         notion_last_seen_edit_time: extracted.last_edited_time,
@@ -520,7 +522,9 @@ async function upsertPostFromNotionPage(
           extracted.publish_date
             ? new Date(extracted.publish_date).toISOString()
             : existingPost.published_at,
-        linkedin_url: extracted.linkedin_url || existingPost.linkedin_url,
+        ...(extracted.linkedin_url || existingPost.linkedin_url
+          ? { linkedin_url: extracted.linkedin_url || existingPost.linkedin_url }
+          : {}),
         pillar: extracted.pillar,
         platform: extracted.platform || existingPost.platform,
         post_type: extracted.post_type || existingPost.post_type,
@@ -578,7 +582,7 @@ async function upsertPostFromNotionPage(
       published_at: extracted.publish_date
         ? new Date(extracted.publish_date).toISOString()
         : null,
-      linkedin_url: extracted.linkedin_url,
+      ...(extracted.linkedin_url ? { linkedin_url: extracted.linkedin_url } : {}),
       pillar: extracted.pillar,
       platform: extracted.platform || "LinkedIn",
       post_type: extracted.post_type,
