@@ -63,7 +63,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ success: true, result });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Push failed";
+    const message = err instanceof Error ? err.message : typeof err === "object" && err !== null && "message" in err ? String((err as { message: unknown }).message) : "Push failed";
     await logSyncEvent(
       supabase,
       user.id,
