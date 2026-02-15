@@ -321,8 +321,10 @@ export default function CalendarClient() {
     try {
       const data = await getCalendarPosts();
       setPosts(data as CalendarPost[]);
-    } catch {
-      /* ignore */
+    } catch (e) {
+      setError(
+        e instanceof Error ? e.message : "Failed to load posts"
+      );
     } finally {
       setLoading(false);
     }
