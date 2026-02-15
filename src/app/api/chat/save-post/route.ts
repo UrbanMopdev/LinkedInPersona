@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { pushSinglePost } from "@/lib/notion/sync-engine";
 
 export async function POST(req: Request) {
   const supabase = await createClient();
@@ -70,6 +71,19 @@ export async function POST(req: Request) {
       content,
       version_number: 1,
     });
+
+    // Auto-push to Notion immediately
+    if (shouldMarkPending) {
+      const { data: syncState } = await supabase
+        .from("notion_sync_state")
+        .select("*")
+        .eq("user_id", user.id)
+        .single();
+
+      if (syncState?.notion_database_id) {
+        pushSinglePost(supabase, syncState, post.id).catch(() => {});
+      }
+    }
 
     return NextResponse.json({ success: true, postId: post.id });
   } catch (err) {

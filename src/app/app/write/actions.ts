@@ -2,6 +2,33 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
+import { pushSinglePost } from "@/lib/notion/sync-engine";
+
+/* ------------------------------------------------------------------ */
+/*  Auto-push to Notion (fire-and-forget after saves)                  */
+/* ------------------------------------------------------------------ */
+
+async function autoPushToNotion(postId: string) {
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return;
+
+    const { data: syncState } = await supabase
+      .from("notion_sync_state")
+      .select("*")
+      .eq("user_id", user.id)
+      .single();
+
+    if (!syncState?.is_connected || !syncState?.notion_database_id) return;
+
+    await pushSinglePost(supabase, syncState, postId);
+  } catch {
+    // Silently fail — sync can be retried manually
+  }
+}
 
 /* ------------------------------------------------------------------ */
 /*  Ideas CRUD                                                         */
@@ -105,6 +132,11 @@ export async function createPost(content: string, ideaId?: string) {
 
   if (versionError) throw versionError;
 
+  // Auto-push to Notion immediately
+  if (shouldMarkPending) {
+    autoPushToNotion(post.id);
+  }
+
   revalidatePath("/app/write");
   return post;
 }
@@ -170,6 +202,11 @@ export async function updatePostContent(postId: string, content: string) {
     });
 
   if (versionError) throw versionError;
+
+  // Auto-push to Notion immediately
+  if (shouldMarkPending) {
+    autoPushToNotion(postId);
+  }
 
   revalidatePath("/app/write");
   return { version: nextVersion };
@@ -287,6 +324,11 @@ export async function markAsPosted(postId: string, linkedinUrl?: string) {
     .eq("user_id", user.id);
 
   if (error) throw error;
+
+  // Auto-push to Notion immediately
+  if (shouldMarkPending) {
+    autoPushToNotion(postId);
+  }
 
   // Also mark linked idea as published
   if (existingPost?.idea_id) {
