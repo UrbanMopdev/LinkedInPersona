@@ -212,11 +212,11 @@ async function handleSelectDatabase(
     );
   }
 
-  // Validate access to this database
+  // Validate access to this data source (SDK v5: databases → dataSources)
   const notion = createNotionClient(state.notion_access_token);
   try {
     const db = await notionRequest(() =>
-      notion.databases.retrieve({ database_id })
+      notion.dataSources.retrieve({ data_source_id: database_id })
     );
 
     // Extract property names for mapping hints
