@@ -52,6 +52,9 @@ interface Post {
   linkedin_post_id: string | null;
   linkedin_url: string | null;
   pillar: string | null;
+  platform: string | null;
+  post_type: string | null;
+  target_icp: string | null;
   tags: string[] | null;
   notion_page_id: string | null;
   sync_status: string | null;
