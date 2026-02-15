@@ -234,7 +234,8 @@ export default function NotionSettings() {
   }
 
   /* ---- Save settings ---- */
-  async function handleSaveSettings() {
+  async function handleSaveSettings(newAutoCreate?: boolean) {
+    const valueToSave = newAutoCreate !== undefined ? newAutoCreate : autoCreate;
     setError("");
     setActionLoading("settings");
     try {
@@ -243,7 +244,7 @@ export default function NotionSettings() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "update_settings",
-          auto_create_in_notion: autoCreate,
+          auto_create_in_notion: valueToSave,
         }),
       });
       const data = await res.json();
@@ -673,9 +674,9 @@ export default function NotionSettings() {
                       autoCreate ? "bg-primary" : "bg-muted"
                     }`}
                     onClick={() => {
-                      setAutoCreate(!autoCreate);
-                      // Auto-save
-                      setTimeout(() => handleSaveSettings(), 0);
+                      const newValue = !autoCreate;
+                      setAutoCreate(newValue);
+                      handleSaveSettings(newValue);
                     }}
                   >
                     <span
