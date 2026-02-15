@@ -207,14 +207,16 @@ export async function POST(req: Request) {
     });
 
     // 9. Save assistant response
-    const { error: assistantMsgError } = await supabase
+    const { data: assistantMsg, error: assistantMsgError } = await supabase
       .from("messages")
       .insert({
         conversation_id: convId,
         user_id: user.id,
         role: "assistant",
         content: text,
-      });
+      })
+      .select("id")
+      .single();
     if (assistantMsgError) throw assistantMsgError;
 
     // Update conversation timestamp
@@ -226,6 +228,7 @@ export async function POST(req: Request) {
     return Response.json({
       response: text,
       conversationId: convId,
+      messageId: assistantMsg.id,
     });
   } catch (e: unknown) {
     const message2 = e instanceof Error ? e.message : "Chat failed";

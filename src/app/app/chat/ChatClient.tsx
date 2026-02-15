@@ -11,16 +11,18 @@ import {
   PanelLeft,
   AlertCircle,
   Loader2,
-  CalendarPlus,
-  CheckCircle2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { LinkedInPreviewCard } from "@/components/linkedin-preview-card";
+import { PostMetaCard } from "@/components/post-meta-card";
+import type { PostDraftMeta } from "@/lib/types/post-draft";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
 /* ------------------------------------------------------------------ */
 
 interface Message {
+  id?: string;
   role: "user" | "assistant";
   content: string;
 }
@@ -41,6 +43,20 @@ interface ParsedPost {
   status: string;
   notes: string;
   content: string;
+}
+
+/** A saved draft linked to a message in the chat */
+interface SavedDraft {
+  postId: string;
+  body: string;
+  meta: PostDraftMeta;
+  notionPageId?: string | null;
+}
+
+interface UserProfile {
+  full_name: string;
+  avatar_url: string;
+  linkedin_handle: string;
 }
 
 /* ------------------------------------------------------------------ */
@@ -84,12 +100,20 @@ function parsePostBlock(text: string): ParsedPost | null {
     post_type: meta["POST_TYPE"] || "",
     target_icp: meta["TARGET_ICP"] || "",
     tags: meta["TAGS"]
-      ? meta["TAGS"].split(",").map((t) => t.trim()).filter(Boolean)
+      ? meta["TAGS"]
+          .split(",")
+          .map((t) => t.trim())
+          .filter(Boolean)
       : [],
     status: (meta["STATUS"] || "draft").toLowerCase(),
     notes: meta["NOTES"] || "",
     content,
   };
+}
+
+/** Strip the ```post ``` block from the message, leaving surrounding prose */
+function stripPostBlock(text: string): string {
+  return text.replace(/```post\s*\n[\s\S]*?```/, "").trim();
 }
 
 /* ------------------------------------------------------------------ */
@@ -101,11 +125,16 @@ export default function ChatClient() {
   const [inputValue, setInputValue] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
-  const [savedPostIds, setSavedPostIds] = useState<Set<number>>(new Set());
-  const [savingPostIdx, setSavingPostIdx] = useState<number | null>(null);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [showSidebar, setShowSidebar] = useState(true);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+
+  // Map message index -> saved draft data
+  const [drafts, setDrafts] = useState<Record<number, SavedDraft>>({});
+  // Track which messages are currently being auto-saved
+  const [savingDrafts, setSavingDrafts] = useState<Set<number>>(new Set());
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
@@ -114,7 +143,29 @@ export default function ChatClient() {
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages]);
+  }, [messages, drafts]);
+
+  // Load user profile for card header
+  useEffect(() => {
+    (async () => {
+      try {
+        const { createClient } = await import("@/lib/supabase/client");
+        const supabase = createClient();
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+        if (!user) return;
+        const { data } = await supabase
+          .from("profiles")
+          .select("full_name, avatar_url, linkedin_handle")
+          .eq("id", user.id)
+          .single();
+        if (data) setProfile(data as UserProfile);
+      } catch {
+        /* ignore */
+      }
+    })();
+  }, []);
 
   const loadConversations = useCallback(async () => {
     try {
@@ -133,16 +184,64 @@ export default function ChatClient() {
   async function loadConversation(convId: string) {
     setConversationId(convId);
     setMessages([]);
+    setDrafts({});
     setError("");
     try {
       const { createClient } = await import("@/lib/supabase/client");
       const supabase = createClient();
-      const { data } = await supabase
+
+      // Load messages with IDs
+      const { data: msgs } = await supabase
         .from("messages")
-        .select("role, content")
+        .select("id, role, content")
         .eq("conversation_id", convId)
         .order("created_at", { ascending: true });
-      if (data) setMessages(data as Message[]);
+
+      if (!msgs) return;
+      setMessages(msgs as Message[]);
+
+      // Load posts linked to these messages
+      const messageIds = msgs
+        .filter((m) => m.role === "assistant")
+        .map((m) => m.id)
+        .filter(Boolean);
+
+      if (messageIds.length > 0) {
+        const { data: posts } = await supabase
+          .from("posts")
+          .select(
+            "id, content, pillar, post_type, target_icp, tags, notes, status, scheduled_at, notion_page_id, message_id"
+          )
+          .in("message_id", messageIds);
+
+        if (posts && posts.length > 0) {
+          const newDrafts: Record<number, SavedDraft> = {};
+          for (const post of posts) {
+            // Find the message index
+            const msgIdx = msgs.findIndex((m) => m.id === post.message_id);
+            if (msgIdx >= 0) {
+              newDrafts[msgIdx] = {
+                postId: post.id,
+                body: post.content,
+                meta: {
+                  pillar: post.pillar || "",
+                  icp: post.target_icp || "",
+                  objective: "",
+                  hookType: post.post_type || "",
+                  status: post.status || "draft",
+                  publishDate: post.scheduled_at
+                    ? post.scheduled_at.split("T")[0]
+                    : "",
+                  tags: post.tags || [],
+                  notes: post.notes || "",
+                },
+                notionPageId: post.notion_page_id,
+              };
+            }
+          }
+          setDrafts(newDrafts);
+        }
+      }
     } catch {
       /* ignore */
     }
@@ -151,8 +250,56 @@ export default function ChatClient() {
   function handleNewConversation() {
     setConversationId(null);
     setMessages([]);
+    setDrafts({});
     setError("");
     setInputValue("");
+  }
+
+  /** Auto-save a parsed post block to the database */
+  async function autoSaveDraft(
+    parsed: ParsedPost,
+    msgIndex: number,
+    messageId?: string
+  ) {
+    setSavingDrafts((prev) => new Set(prev).add(msgIndex));
+    try {
+      const res = await fetch("/api/chat/save-post", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...parsed,
+          message_id: messageId || null,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to save draft");
+
+      setDrafts((prev) => ({
+        ...prev,
+        [msgIndex]: {
+          postId: data.postId,
+          body: parsed.content,
+          meta: {
+            pillar: parsed.pillar,
+            icp: parsed.target_icp,
+            objective: "",
+            hookType: parsed.post_type,
+            status: parsed.status,
+            publishDate: "",
+            tags: parsed.tags,
+            notes: parsed.notes,
+          },
+        },
+      }));
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Failed to save draft");
+    } finally {
+      setSavingDrafts((prev) => {
+        const next = new Set(prev);
+        next.delete(msgIndex);
+        return next;
+      });
+    }
   }
 
   async function handleSend() {
@@ -176,10 +323,21 @@ export default function ChatClient() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Chat failed");
 
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: data.response },
-      ]);
+      const newMsg: Message = {
+        id: data.messageId,
+        role: "assistant",
+        content: data.response,
+      };
+      setMessages((prev) => {
+        const updated = [...prev, newMsg];
+        // Auto-save if post block detected
+        const parsed = parsePostBlock(data.response);
+        if (parsed) {
+          const msgIdx = updated.length - 1;
+          autoSaveDraft(parsed, msgIdx, data.messageId);
+        }
+        return updated;
+      });
 
       if (!conversationId && data.conversationId) {
         setConversationId(data.conversationId);
@@ -192,24 +350,53 @@ export default function ChatClient() {
     }
   }
 
-  async function handleSavePost(parsed: ParsedPost, msgIndex: number) {
-    setSavingPostIdx(msgIndex);
-    setError("");
-    try {
-      const res = await fetch("/api/chat/save-post", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(parsed),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to save post");
-      setSavedPostIds((prev) => new Set(prev).add(msgIndex));
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Failed to save post");
-    } finally {
-      setSavingPostIdx(null);
-    }
+  /** Update post body via the card's Edit/Save */
+  async function handleUpdateBody(postId: string, newBody: string) {
+    const res = await fetch("/api/chat/update-post", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ postId, body: newBody }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Failed to update post");
+
+    // Update local drafts state
+    setDrafts((prev) => {
+      const updated = { ...prev };
+      for (const idx of Object.keys(updated)) {
+        if (updated[Number(idx)].postId === postId) {
+          updated[Number(idx)] = { ...updated[Number(idx)], body: newBody };
+        }
+      }
+      return updated;
+    });
   }
+
+  /** Update post meta via the card's Edit/Save */
+  async function handleUpdateMeta(postId: string, newMeta: PostDraftMeta) {
+    const res = await fetch("/api/chat/update-post-meta", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ postId, meta: newMeta }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Failed to update meta");
+
+    // Update local drafts state
+    setDrafts((prev) => {
+      const updated = { ...prev };
+      for (const idx of Object.keys(updated)) {
+        if (updated[Number(idx)].postId === postId) {
+          updated[Number(idx)] = { ...updated[Number(idx)], meta: newMeta };
+        }
+      }
+      return updated;
+    });
+  }
+
+  const authorName = profile?.full_name || "You";
+  const authorHeadline = profile?.linkedin_handle || "";
+  const authorAvatarUrl = profile?.avatar_url || "";
 
   return (
     <div className="flex h-[calc(100vh-3.5rem)]">
@@ -299,6 +486,11 @@ export default function ChatClient() {
                   msg.role === "assistant"
                     ? parsePostBlock(msg.content)
                     : null;
+                const draft = drafts[i];
+                const isSavingDraft = savingDrafts.has(i);
+                const proseText = parsed
+                  ? stripPostBlock(msg.content)
+                  : msg.content;
 
                 return (
                   <div
@@ -308,38 +500,46 @@ export default function ChatClient() {
                       msg.role === "user" ? "items-end" : "items-start"
                     )}
                   >
-                    <div
-                      className={cn(
-                        "max-w-[80%] rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap break-words",
-                        msg.role === "user"
-                          ? "bg-primary text-primary-foreground rounded-br-md"
-                          : "bg-muted text-foreground rounded-bl-md"
-                      )}
-                    >
-                      {msg.content}
-                    </div>
-                    {parsed && (
-                      <div className="mt-2">
-                        {savedPostIds.has(i) ? (
-                          <div className="flex items-center gap-1.5 text-sm text-emerald-600">
-                            <CheckCircle2 className="h-4 w-4" />
-                            Added to Calendar
-                          </div>
-                        ) : (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => handleSavePost(parsed, i)}
-                            disabled={savingPostIdx === i}
-                          >
-                            {savingPostIdx === i ? (
-                              <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
-                            ) : (
-                              <CalendarPlus className="h-3.5 w-3.5 mr-1.5" />
-                            )}
-                            Add to Calendar
-                          </Button>
+                    {/* Message bubble (prose only — post block stripped) */}
+                    {proseText && (
+                      <div
+                        className={cn(
+                          "max-w-[80%] rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap break-words",
+                          msg.role === "user"
+                            ? "bg-primary text-primary-foreground rounded-br-md"
+                            : "bg-muted text-foreground rounded-bl-md"
                         )}
+                      >
+                        {proseText}
+                      </div>
+                    )}
+
+                    {/* Draft cards */}
+                    {parsed && (
+                      <div className="mt-3 space-y-2 w-full max-w-[480px]">
+                        {isSavingDraft && !draft ? (
+                          <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            Saving draft...
+                          </div>
+                        ) : draft ? (
+                          <>
+                            <LinkedInPreviewCard
+                              postId={draft.postId}
+                              authorName={authorName}
+                              authorHeadline={authorHeadline}
+                              authorAvatarUrl={authorAvatarUrl}
+                              body={draft.body}
+                              onSave={handleUpdateBody}
+                            />
+                            <PostMetaCard
+                              postId={draft.postId}
+                              meta={draft.meta}
+                              notionPageId={draft.notionPageId}
+                              onSave={handleUpdateMeta}
+                            />
+                          </>
+                        ) : null}
                       </div>
                     )}
                   </div>
