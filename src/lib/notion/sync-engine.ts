@@ -688,7 +688,7 @@ async function pushPostToNotion(
 
     const newPage = await notionRequest(() =>
       notion.pages.create({
-        parent: { data_source_id: syncState.notion_database_id },
+        parent: { database_id: syncState.notion_database_id },
         properties,
       })
     );
