@@ -3,6 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { pushSinglePost } from "@/lib/notion/sync-engine";
+import { SupabaseClient } from "@supabase/supabase-js";
 
 /* ------------------------------------------------------------------ */
 /*  Auth helper                                                        */
@@ -18,23 +19,17 @@ async function getUser() {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Auto-push to Notion (fire-and-forget after saves)                  */
+/*  Auto-push to Notion (awaited, reuses existing supabase client)     */
 /* ------------------------------------------------------------------ */
 
-async function autoPushToNotion(postId: string) {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function autoPushToNotion(supabase: SupabaseClient, syncState: any, postId: string) {
   try {
-    const { supabase, user } = await getUser();
-    const { data: syncState } = await supabase
-      .from("notion_sync_state")
-      .select("*")
-      .eq("user_id", user.id)
-      .single();
-
     if (!syncState?.is_connected || !syncState?.notion_database_id) return;
-
     await pushSinglePost(supabase, syncState, postId);
-  } catch {
-    // Silently fail — sync can be retried manually
+  } catch (err) {
+    // Log but don't throw — sync can be retried manually
+    console.error("[notion-auto-push] failed for post", postId, err);
   }
 }
 
@@ -135,16 +130,16 @@ export async function updatePostFields(
     .eq("user_id", user.id)
     .single();
 
-  // Check if Notion auto-create is on (for posts not yet linked)
-  const { data: notionState } = await supabase
+  // Fetch FULL sync state so we can pass it to pushSinglePost
+  const { data: syncState } = await supabase
     .from("notion_sync_state")
-    .select("auto_create_in_notion, is_connected")
+    .select("*")
     .eq("user_id", user.id)
     .maybeSingle();
 
-  const shouldMarkPending =
+  const shouldSync =
     existing?.notion_page_id ||
-    (notionState?.is_connected && notionState?.auto_create_in_notion);
+    (syncState?.is_connected && syncState?.auto_create_in_notion);
 
   const payload: Record<string, unknown> = {
     ...fields,
@@ -158,7 +153,7 @@ export async function updatePostFields(
     payload.published_at = new Date().toISOString();
   }
 
-  if (shouldMarkPending) {
+  if (shouldSync) {
     payload.sync_status = "pending";
   }
 
@@ -170,9 +165,9 @@ export async function updatePostFields(
 
   if (error) throw error;
 
-  // Auto-push to Notion immediately (fire-and-forget)
-  if (shouldMarkPending) {
-    autoPushToNotion(postId);
+  // Push to Notion immediately (awaited, reuses this request's supabase client)
+  if (shouldSync && syncState) {
+    await autoPushToNotion(supabase, syncState, postId);
   }
 
   revalidatePath("/app/write");
@@ -197,23 +192,23 @@ export async function reschedulePost(
     .eq("user_id", user.id)
     .single();
 
-  // Check if Notion auto-create is on (for posts not yet linked)
-  const { data: notionState } = await supabase
+  // Fetch FULL sync state
+  const { data: syncState } = await supabase
     .from("notion_sync_state")
-    .select("auto_create_in_notion, is_connected")
+    .select("*")
     .eq("user_id", user.id)
     .maybeSingle();
 
-  const shouldMarkPending =
+  const shouldSync =
     existing?.notion_page_id ||
-    (notionState?.is_connected && notionState?.auto_create_in_notion);
+    (syncState?.is_connected && syncState?.auto_create_in_notion);
 
   const payload: Record<string, unknown> = {
     scheduled_at: newDate,
     status: "scheduled",
     updated_at: new Date().toISOString(),
   };
-  if (shouldMarkPending) {
+  if (shouldSync) {
     payload.sync_status = "pending";
   }
 
@@ -225,9 +220,9 @@ export async function reschedulePost(
 
   if (error) throw error;
 
-  // Auto-push to Notion immediately
-  if (shouldMarkPending) {
-    autoPushToNotion(postId);
+  // Push to Notion immediately
+  if (shouldSync && syncState) {
+    await autoPushToNotion(supabase, syncState, postId);
   }
 
   revalidatePath("/app/calendar");

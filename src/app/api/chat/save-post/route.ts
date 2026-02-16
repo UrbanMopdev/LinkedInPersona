@@ -34,15 +34,15 @@ export async function POST(req: Request) {
   }
 
   try {
-    // Check if Notion auto-create is on
-    const { data: notionState } = await supabase
+    // Fetch FULL sync state upfront
+    const { data: syncState } = await supabase
       .from("notion_sync_state")
-      .select("auto_create_in_notion, is_connected")
+      .select("*")
       .eq("user_id", user.id)
       .maybeSingle();
 
-    const shouldMarkPending =
-      notionState?.is_connected && notionState?.auto_create_in_notion;
+    const shouldSync =
+      syncState?.is_connected && syncState?.auto_create_in_notion;
 
     // Create the post
     const insertPayload: Record<string, unknown> = {
@@ -58,7 +58,7 @@ export async function POST(req: Request) {
       notes: notes || null,
     };
     if (message_id) insertPayload.message_id = message_id;
-    if (shouldMarkPending) insertPayload.sync_status = "pending";
+    if (shouldSync) insertPayload.sync_status = "pending";
 
     const { data: post, error: postError } = await supabase
       .from("posts")
@@ -76,16 +76,12 @@ export async function POST(req: Request) {
       version_number: 1,
     });
 
-    // Auto-push to Notion immediately
-    if (shouldMarkPending) {
-      const { data: syncState } = await supabase
-        .from("notion_sync_state")
-        .select("*")
-        .eq("user_id", user.id)
-        .single();
-
-      if (syncState?.notion_database_id) {
-        pushSinglePost(supabase, syncState, post.id).catch(() => {});
+    // Push to Notion immediately (awaited, same request context)
+    if (shouldSync && syncState?.notion_database_id) {
+      try {
+        await pushSinglePost(supabase, syncState, post.id);
+      } catch (pushErr) {
+        console.error("[notion-auto-push] chat save-post failed", pushErr);
       }
     }
 
