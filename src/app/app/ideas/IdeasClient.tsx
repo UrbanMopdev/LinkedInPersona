@@ -22,6 +22,7 @@ import {
   AlertCircle,
   CheckCircle2,
   ArrowRight,
+  Mic,
 } from "lucide-react";
 
 interface Idea {
@@ -33,15 +34,29 @@ interface Idea {
   updated_at: string;
 }
 
+interface SourceArtifact {
+  id: string;
+  type: string;
+  content: string;
+}
+
+interface GeneratedIdea {
+  title: string;
+  body: string;
+  source_artifacts?: SourceArtifact[];
+}
+
 export default function IdeasClient() {
   const [ideas, setIdeas] = useState<Idea[]>([]);
   const [loading, setLoading] = useState(true);
   const [topic, setTopic] = useState("");
-  const [generatedIdeas, setGeneratedIdeas] = useState<{ title: string; body: string }[]>([]);
+  const [generatedIdeas, setGeneratedIdeas] = useState<GeneratedIdea[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [activeTab, setActiveTab] = useState("all");
+  const [generateMode, setGenerateMode] = useState<"topic" | "meetings">("topic");
+  const [hasMeetings, setHasMeetings] = useState(false);
 
   const loadIdeas = useCallback(async () => {
     try {
@@ -56,19 +71,41 @@ export default function IdeasClient() {
 
   useEffect(() => {
     loadIdeas();
+    // Check if user has meeting artifacts
+    (async () => {
+      try {
+        const { createClient } = await import("@/lib/supabase/client");
+        const supabase = createClient();
+        const { count } = await supabase
+          .from("meeting_artifacts")
+          .select("id", { count: "exact", head: true });
+        setHasMeetings((count || 0) > 0);
+      } catch {
+        /* ignore */
+      }
+    })();
   }, [loadIdeas]);
 
   async function handleGenerate() {
-    if (!topic.trim()) return;
     setError("");
     setIsGenerating(true);
     setGeneratedIdeas([]);
     try {
-      const res = await fetch("/api/ai/generate-ideas", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ topic: topic.trim() }),
-      });
+      let res;
+      if (generateMode === "meetings") {
+        res = await fetch("/api/ai/generate-ideas-from-meetings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        });
+      } else {
+        if (!topic.trim()) return;
+        res = await fetch("/api/ai/generate-ideas", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ topic: topic.trim() }),
+        });
+      }
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Generation failed");
       setGeneratedIdeas(data.ideas);
@@ -165,23 +202,63 @@ export default function IdeasClient() {
       {/* Generate section */}
       <Card className="mb-8">
         <CardContent className="pt-6">
-          <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
-            <Sparkles className="h-4 w-4" />
-            Generate Ideas
-          </h3>
-          <div className="flex gap-3">
-            <Input
-              className="flex-1"
-              placeholder="Enter a topic (e.g. AI in recruiting, leadership lessons)..."
-              value={topic}
-              onChange={(e) => setTopic(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleGenerate()}
-            />
-            <Button onClick={handleGenerate} disabled={isGenerating || !topic.trim()}>
-              <Sparkles className="h-4 w-4 mr-2" />
-              {isGenerating ? "Generating..." : "Generate"}
-            </Button>
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-semibold flex items-center gap-2">
+              <Sparkles className="h-4 w-4" />
+              Generate Ideas
+            </h3>
+            {hasMeetings && (
+              <div className="flex items-center gap-1 rounded-lg border p-0.5">
+                <button
+                  className={`text-xs px-2 py-1 rounded-md transition-colors ${
+                    generateMode === "topic"
+                      ? "bg-primary text-primary-foreground"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                  onClick={() => setGenerateMode("topic")}
+                >
+                  From Topic
+                </button>
+                <button
+                  className={`text-xs px-2 py-1 rounded-md transition-colors flex items-center gap-1 ${
+                    generateMode === "meetings"
+                      ? "bg-primary text-primary-foreground"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                  onClick={() => setGenerateMode("meetings")}
+                >
+                  <Mic className="h-3 w-3" />
+                  From Meetings
+                </button>
+              </div>
+            )}
           </div>
+
+          {generateMode === "topic" ? (
+            <div className="flex gap-3">
+              <Input
+                className="flex-1"
+                placeholder="Enter a topic (e.g. AI in recruiting, leadership lessons)..."
+                value={topic}
+                onChange={(e) => setTopic(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleGenerate()}
+              />
+              <Button onClick={handleGenerate} disabled={isGenerating || !topic.trim()}>
+                <Sparkles className="h-4 w-4 mr-2" />
+                {isGenerating ? "Generating..." : "Generate"}
+              </Button>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                Generate ideas grounded in your meeting insights, decisions, and conversations.
+              </p>
+              <Button onClick={handleGenerate} disabled={isGenerating}>
+                <Mic className="h-4 w-4 mr-2" />
+                {isGenerating ? "Generating from meetings..." : "Generate from Meetings"}
+              </Button>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -205,6 +282,20 @@ export default function IdeasClient() {
                     <div className="flex-1 min-w-0">
                       <h4 className="font-semibold text-sm mb-1">{idea.title}</h4>
                       <p className="text-body-sm text-muted-foreground">{idea.body}</p>
+                      {idea.source_artifacts && idea.source_artifacts.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5 mt-2">
+                          {idea.source_artifacts.map((sa) => (
+                            <span
+                              key={sa.id}
+                              className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200"
+                              title={sa.content}
+                            >
+                              <Mic className="h-2.5 w-2.5" />
+                              {sa.type.replace(/_/g, " ")}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </div>
                     <Button size="sm" onClick={() => handleSave(idea.title, idea.body)}>
                       <Save className="h-3.5 w-3.5 mr-1.5" />

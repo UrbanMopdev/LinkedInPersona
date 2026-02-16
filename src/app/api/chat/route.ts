@@ -58,6 +58,15 @@ export async function POST(req: Request) {
     // 4. Retrieve relevant context
     let memoryContext: { content: string; category: string | null }[] = [];
     let archiveContext: { content: string; posted_at: string | null }[] = [];
+    let meetingArtifactContext: {
+      id: string;
+      type: string;
+      content: string;
+      context: string | null;
+      theme: string | null;
+      pillar: string | null;
+      meeting_title: string | null;
+    }[] = [];
 
     if (queryEmbedding) {
       // Top 5 relevant user_memory rows
@@ -78,6 +87,17 @@ export async function POST(req: Request) {
         },
       );
       if (archivePosts) archiveContext = archivePosts;
+
+      // Top 5 relevant meeting artifacts
+      const { data: meetingArtifacts } = await supabase.rpc(
+        "match_meeting_artifacts",
+        {
+          query_embedding: JSON.stringify(queryEmbedding),
+          match_user_id: user.id,
+          match_count: 5,
+        },
+      );
+      if (meetingArtifacts) meetingArtifactContext = meetingArtifacts;
     }
 
     // 4b. Fetch ALL posts from the database for full context
@@ -168,6 +188,21 @@ export async function POST(req: Request) {
       );
     }
 
+    if (meetingArtifactContext.length > 0) {
+      contextParts.push(
+        "\nRelevant insights from the user's meetings (use these as grounded source material):\n" +
+          meetingArtifactContext
+            .map(
+              (a, i) =>
+                `${i + 1}. [${a.type}] ${a.content}${a.context ? ` (Context: ${a.context})` : ""}${a.meeting_title ? ` — from meeting: "${a.meeting_title}"` : ""}${a.theme ? ` [theme: ${a.theme}]` : ""}${a.pillar ? ` [pillar: ${a.pillar}]` : ""}`,
+            )
+            .join("\n"),
+      );
+      contextParts.push(
+        "\nWhen using meeting artifacts as source material, mention the source naturally (e.g., 'In a recent conversation about X...' or 'A decision we made about Y...'). This grounds the content in real experience.",
+      );
+    }
+
     // Include all posts from the user's content calendar for full context
     if (allPosts && allPosts.length > 0) {
       const postSummaries = allPosts.map((p, i) => {
@@ -229,6 +264,16 @@ export async function POST(req: Request) {
       response: text,
       conversationId: convId,
       messageId: assistantMsg.id,
+      sourceArtifacts: meetingArtifactContext.length > 0
+        ? meetingArtifactContext.map((a) => ({
+            id: a.id,
+            type: a.type,
+            content: a.content,
+            meeting_title: a.meeting_title,
+            theme: a.theme,
+            pillar: a.pillar,
+          }))
+        : undefined,
     });
   } catch (e: unknown) {
     const message2 = e instanceof Error ? e.message : "Chat failed";

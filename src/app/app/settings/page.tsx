@@ -12,6 +12,7 @@ import { User, Globe, Clock, Mail } from "lucide-react";
 import LinkedInImport from "./LinkedInImport";
 import NotionSettings from "./NotionSettings";
 import NotionConflicts from "./NotionConflicts";
+import ReadAiSettings from "./ReadAiSettings";
 
 export default async function SettingsPage() {
   const supabase = await createClient();
@@ -74,6 +75,9 @@ export default async function SettingsPage() {
 
         {/* Notion Conflicts */}
         <NotionConflicts />
+
+        {/* Read.ai Integration */}
+        <ReadAiSettings />
 
         {/* Profile Card */}
         <Card>
