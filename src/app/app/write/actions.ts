@@ -3,30 +3,19 @@
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { pushSinglePost } from "@/lib/notion/sync-engine";
+import { SupabaseClient } from "@supabase/supabase-js";
 
 /* ------------------------------------------------------------------ */
-/*  Auto-push to Notion (fire-and-forget after saves)                  */
+/*  Auto-push to Notion (awaited, reuses existing supabase client)     */
 /* ------------------------------------------------------------------ */
 
-async function autoPushToNotion(postId: string) {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function autoPushToNotion(supabase: SupabaseClient, syncState: any, postId: string) {
   try {
-    const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) return;
-
-    const { data: syncState } = await supabase
-      .from("notion_sync_state")
-      .select("*")
-      .eq("user_id", user.id)
-      .single();
-
     if (!syncState?.is_connected || !syncState?.notion_database_id) return;
-
     await pushSinglePost(supabase, syncState, postId);
-  } catch {
-    // Silently fail — sync can be retried manually
+  } catch (err) {
+    console.error("[notion-auto-push] failed for post", postId, err);
   }
 }
 
@@ -97,15 +86,15 @@ export async function createPost(content: string, ideaId?: string) {
   } = await supabase.auth.getUser();
   if (!user) throw new Error("Not authenticated");
 
-  // Check if Notion is connected with auto-create to mark for sync
-  const { data: notionState } = await supabase
+  // Fetch FULL sync state so we can pass it to pushSinglePost
+  const { data: syncState } = await supabase
     .from("notion_sync_state")
-    .select("auto_create_in_notion, is_connected")
+    .select("*")
     .eq("user_id", user.id)
     .maybeSingle();
 
-  const shouldMarkPending =
-    notionState?.is_connected && notionState?.auto_create_in_notion;
+  const shouldSync =
+    syncState?.is_connected && syncState?.auto_create_in_notion;
 
   const { data: post, error: postError } = await supabase
     .from("posts")
@@ -114,7 +103,7 @@ export async function createPost(content: string, ideaId?: string) {
       content,
       idea_id: ideaId || null,
       status: "draft",
-      ...(shouldMarkPending ? { sync_status: "pending" } : {}),
+      ...(shouldSync ? { sync_status: "pending" } : {}),
     })
     .select()
     .single();
@@ -132,9 +121,9 @@ export async function createPost(content: string, ideaId?: string) {
 
   if (versionError) throw versionError;
 
-  // Auto-push to Notion immediately
-  if (shouldMarkPending) {
-    autoPushToNotion(post.id);
+  // Push to Notion immediately (awaited, same request context)
+  if (shouldSync && syncState) {
+    await autoPushToNotion(supabase, syncState, post.id);
   }
 
   revalidatePath("/app/write");
@@ -157,7 +146,7 @@ export async function updatePostContent(postId: string, content: string) {
 
   const nextVersion = (versions?.[0]?.version_number || 0) + 1;
 
-  // Check if this post is linked to Notion — if so, mark as pending
+  // Check if this post is linked to Notion
   const { data: existingPost } = await supabase
     .from("posts")
     .select("notion_page_id")
@@ -165,22 +154,22 @@ export async function updatePostContent(postId: string, content: string) {
     .eq("user_id", user.id)
     .single();
 
-  // Check if Notion auto-create is on (for posts not yet linked)
-  const { data: notionState } = await supabase
+  // Fetch FULL sync state
+  const { data: syncState } = await supabase
     .from("notion_sync_state")
-    .select("auto_create_in_notion, is_connected")
+    .select("*")
     .eq("user_id", user.id)
     .maybeSingle();
 
-  const shouldMarkPending =
+  const shouldSync =
     existingPost?.notion_page_id ||
-    (notionState?.is_connected && notionState?.auto_create_in_notion);
+    (syncState?.is_connected && syncState?.auto_create_in_notion);
 
   const updatePayload: Record<string, unknown> = {
     content,
     updated_at: new Date().toISOString(),
   };
-  if (shouldMarkPending) {
+  if (shouldSync) {
     updatePayload.sync_status = "pending";
   }
 
@@ -203,9 +192,9 @@ export async function updatePostContent(postId: string, content: string) {
 
   if (versionError) throw versionError;
 
-  // Auto-push to Notion immediately
-  if (shouldMarkPending) {
-    autoPushToNotion(postId);
+  // Push to Notion immediately
+  if (shouldSync && syncState) {
+    await autoPushToNotion(supabase, syncState, postId);
   }
 
   revalidatePath("/app/write");
@@ -296,16 +285,16 @@ export async function markAsPosted(postId: string, linkedinUrl?: string) {
     .eq("user_id", user.id)
     .single();
 
-  // Check if Notion auto-create is on (for posts not yet linked)
-  const { data: notionState } = await supabase
+  // Fetch FULL sync state
+  const { data: syncState } = await supabase
     .from("notion_sync_state")
-    .select("auto_create_in_notion, is_connected")
+    .select("*")
     .eq("user_id", user.id)
     .maybeSingle();
 
-  const shouldMarkPending =
+  const shouldSync =
     existingPost?.notion_page_id ||
-    (notionState?.is_connected && notionState?.auto_create_in_notion);
+    (syncState?.is_connected && syncState?.auto_create_in_notion);
 
   const updatePayload: Record<string, unknown> = {
     status: "published",
@@ -313,7 +302,7 @@ export async function markAsPosted(postId: string, linkedinUrl?: string) {
     linkedin_url: linkedinUrl || null,
     updated_at: new Date().toISOString(),
   };
-  if (shouldMarkPending) {
+  if (shouldSync) {
     updatePayload.sync_status = "pending";
   }
 
@@ -325,9 +314,9 @@ export async function markAsPosted(postId: string, linkedinUrl?: string) {
 
   if (error) throw error;
 
-  // Auto-push to Notion immediately
-  if (shouldMarkPending) {
-    autoPushToNotion(postId);
+  // Push to Notion immediately
+  if (shouldSync && syncState) {
+    await autoPushToNotion(supabase, syncState, postId);
   }
 
   // Also mark linked idea as published
