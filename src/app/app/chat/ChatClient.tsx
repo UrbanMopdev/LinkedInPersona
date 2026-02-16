@@ -11,6 +11,7 @@ import {
   PanelLeft,
   AlertCircle,
   Loader2,
+  Mic,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { LinkedInPreviewCard } from "@/components/linkedin-preview-card";
@@ -51,6 +52,15 @@ interface SavedDraft {
   body: string;
   meta: PostDraftMeta;
   notionPageId?: string | null;
+}
+
+interface SourceArtifact {
+  id: string;
+  type: string;
+  content: string;
+  meeting_title?: string;
+  theme?: string;
+  pillar?: string;
 }
 
 interface UserProfile {
@@ -134,6 +144,10 @@ export default function ChatClient() {
   const [drafts, setDrafts] = useState<Record<number, SavedDraft>>({});
   // Track which messages are currently being auto-saved
   const [savingDrafts, setSavingDrafts] = useState<Set<number>>(new Set());
+  // Map message index -> source artifacts used for that response
+  const [sourceArtifactsMap, setSourceArtifactsMap] = useState<
+    Record<number, SourceArtifact[]>
+  >({});
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -330,11 +344,18 @@ export default function ChatClient() {
       };
       setMessages((prev) => {
         const updated = [...prev, newMsg];
+        const msgIdx = updated.length - 1;
         // Auto-save if post block detected
         const parsed = parsePostBlock(data.response);
         if (parsed) {
-          const msgIdx = updated.length - 1;
           autoSaveDraft(parsed, msgIdx, data.messageId);
+        }
+        // Store source artifacts if returned
+        if (data.sourceArtifacts && data.sourceArtifacts.length > 0) {
+          setSourceArtifactsMap((prev) => ({
+            ...prev,
+            [msgIdx]: data.sourceArtifacts,
+          }));
         }
         return updated;
       });
@@ -491,6 +512,7 @@ export default function ChatClient() {
                 const proseText = parsed
                   ? stripPostBlock(msg.content)
                   : msg.content;
+                const msgSourceArtifacts = sourceArtifactsMap[i];
 
                 return (
                   <div
@@ -500,6 +522,29 @@ export default function ChatClient() {
                       msg.role === "user" ? "items-end" : "items-start"
                     )}
                   >
+                    {/* Source chips for meeting-grounded responses */}
+                    {msgSourceArtifacts && msgSourceArtifacts.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 mb-1.5 max-w-[80%]">
+                        {msgSourceArtifacts.map((sa) => (
+                          <span
+                            key={sa.id}
+                            className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200"
+                            title={`${sa.content}${sa.meeting_title ? ` (from: ${sa.meeting_title})` : ""}`}
+                          >
+                            <Mic className="h-2.5 w-2.5" />
+                            {sa.type.replace(/_/g, " ")}
+                            {sa.meeting_title && (
+                              <span className="text-indigo-400 ml-0.5">
+                                {sa.meeting_title.length > 20
+                                  ? sa.meeting_title.slice(0, 20) + "..."
+                                  : sa.meeting_title}
+                              </span>
+                            )}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+
                     {/* Message bubble (prose only — post block stripped) */}
                     {proseText && (
                       <div

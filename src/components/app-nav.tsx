@@ -11,6 +11,9 @@ import {
   X,
   CalendarDays,
   BarChart3,
+  Lightbulb,
+  BookOpen,
+  Mic,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -18,7 +21,10 @@ import { useState } from "react";
 
 const navItems = [
   { href: "/app/write", label: "Write", icon: PenLine },
+  { href: "/app/ideas", label: "Ideas", icon: Lightbulb },
   { href: "/app/calendar", label: "Calendar", icon: CalendarDays },
+  { href: "/app/library/meetings", label: "Meetings", icon: Mic },
+  { href: "/app/library/insights", label: "Insights", icon: BookOpen },
   { href: "/app/reports", label: "Reports", icon: BarChart3 },
   { href: "/app/chat", label: "Chat", icon: MessageSquare },
   { href: "/app/settings", label: "Settings", icon: Settings },
