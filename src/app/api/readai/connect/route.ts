@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { validateReadAiKey } from "@/lib/readai/client";
+import crypto from "crypto";
 
 /* ------------------------------------------------------------------ */
 /*  POST /api/readai/connect                                           */
 /*  Connect, disconnect, get_state, update_settings for Read.ai        */
+/*  Now uses webhook-based integration (no REST API polling)           */
 /* ------------------------------------------------------------------ */
 
 export async function POST(req: NextRequest) {
@@ -30,6 +31,8 @@ export async function POST(req: NextRequest) {
         return await handleGetState(supabase, user.id);
       case "update_settings":
         return await handleUpdateSettings(supabase, user.id, body);
+      case "regenerate_token":
+        return await handleRegenerateToken(supabase, user.id);
       default:
         return NextResponse.json(
           { error: "Unknown action" },
@@ -44,12 +47,11 @@ export async function POST(req: NextRequest) {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Connect: validate API key and store it                             */
+/*  Connect: generate webhook secret and store settings                */
 /* ------------------------------------------------------------------ */
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function handleConnect(supabase: any, userId: string, body: {
-  api_key: string;
   date_range_start?: string;
   date_range_end?: string;
   include_keywords?: string[];
@@ -58,22 +60,8 @@ async function handleConnect(supabase: any, userId: string, body: {
   redact_participant_names?: boolean;
   privacy_level?: string;
 }) {
-  const { api_key } = body;
-  if (!api_key) {
-    return NextResponse.json(
-      { error: "api_key is required" },
-      { status: 400 }
-    );
-  }
-
-  // Validate the key
-  const validation = await validateReadAiKey(api_key);
-  if (!validation.valid) {
-    return NextResponse.json(
-      { error: validation.error || "Invalid API key" },
-      { status: 400 }
-    );
-  }
+  // Generate a unique webhook secret for this user
+  const webhookSecret = crypto.randomBytes(32).toString("hex");
 
   // Upsert sync state
   const { error: upsertError } = await supabase
@@ -81,7 +69,8 @@ async function handleConnect(supabase: any, userId: string, body: {
     .upsert(
       {
         user_id: userId,
-        api_key,
+        api_key: null,
+        webhook_secret: webhookSecret,
         is_connected: true,
         date_range_start: body.date_range_start || null,
         date_range_end: body.date_range_end || null,
@@ -97,7 +86,10 @@ async function handleConnect(supabase: any, userId: string, body: {
 
   if (upsertError) throw upsertError;
 
-  return NextResponse.json({ connected: true });
+  return NextResponse.json({
+    connected: true,
+    webhook_secret: webhookSecret,
+  });
 }
 
 /* ------------------------------------------------------------------ */
@@ -112,7 +104,7 @@ async function handleDisconnect(supabase: any, userId: string) {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Get state: return sync status (no key exposed)                     */
+/*  Get state: return sync status + webhook_secret for URL display     */
 /* ------------------------------------------------------------------ */
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -120,7 +112,7 @@ async function handleGetState(supabase: any, userId: string) {
   const { data: state } = await supabase
     .from("readai_sync_state")
     .select(
-      "id, is_connected, date_range_start, date_range_end, include_keywords, exclude_keywords, exclude_meeting_patterns, redact_participant_names, privacy_level, last_import_at, last_sync_at, last_error, meetings_imported, artifacts_extracted, created_at, updated_at"
+      "id, is_connected, webhook_secret, date_range_start, date_range_end, include_keywords, exclude_keywords, exclude_meeting_patterns, redact_participant_names, privacy_level, last_import_at, last_sync_at, last_error, meetings_imported, artifacts_extracted, created_at, updated_at"
     )
     .eq("user_id", userId)
     .maybeSingle();
@@ -192,4 +184,25 @@ async function handleUpdateSettings(supabase: any, userId: string, body: {
   if (error) throw error;
 
   return NextResponse.json({ updated: true });
+}
+
+/* ------------------------------------------------------------------ */
+/*  Regenerate webhook token                                           */
+/* ------------------------------------------------------------------ */
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function handleRegenerateToken(supabase: any, userId: string) {
+  const newSecret = crypto.randomBytes(32).toString("hex");
+
+  const { error } = await supabase
+    .from("readai_sync_state")
+    .update({
+      webhook_secret: newSecret,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("user_id", userId);
+
+  if (error) throw error;
+
+  return NextResponse.json({ webhook_secret: newSecret });
 }

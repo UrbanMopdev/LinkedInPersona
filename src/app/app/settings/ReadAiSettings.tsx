@@ -22,8 +22,10 @@ import {
   ChevronDown,
   ChevronUp,
   Shield,
-  Download,
+  Copy,
+  Check,
   Zap,
+  RotateCcw,
 } from "lucide-react";
 
 /* ------------------------------------------------------------------ */
@@ -33,6 +35,7 @@ import {
 interface SyncState {
   id: string;
   is_connected: boolean;
+  webhook_secret: string | null;
   date_range_start: string | null;
   date_range_end: string | null;
   include_keywords: string[];
@@ -70,16 +73,12 @@ export default function ReadAiSettings() {
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
-
-  // Connect form
-  const [apiKeyInput, setApiKeyInput] = useState("");
+  const [copied, setCopied] = useState(false);
 
   // Settings
-  const [dateStart, setDateStart] = useState("");
-  const [dateEnd, setDateEnd] = useState("");
+  const [excludePatterns, setExcludePatterns] = useState("");
   const [includeKw, setIncludeKw] = useState("");
   const [excludeKw, setExcludeKw] = useState("");
-  const [excludePatterns, setExcludePatterns] = useState("");
   const [redactNames, setRedactNames] = useState(false);
   const [privacyLevel, setPrivacyLevel] = useState("standard");
 
@@ -87,15 +86,14 @@ export default function ReadAiSettings() {
   const [showSettings, setShowSettings] = useState(false);
   const [showPrivacy, setShowPrivacy] = useState(false);
 
-  // Import wizard step
-  const [wizardStep, setWizardStep] = useState<
-    "idle" | "importing" | "processing" | "clustering" | "done"
-  >("idle");
-  const [wizardResults, setWizardResults] = useState<{
-    import?: { imported: number; filtered: number; total: number };
-    processing?: { processed: number; artifacts: number };
-    themes?: { themesCreated: number; themesUpdated: number };
-  }>({});
+  /* ---- Helpers ---- */
+  function getWebhookUrl(secret: string) {
+    const base =
+      typeof window !== "undefined"
+        ? window.location.origin
+        : "";
+    return `${base}/api/readai/webhook?token=${secret}`;
+  }
 
   /* ---- Load state ---- */
   const loadState = useCallback(async () => {
@@ -108,8 +106,6 @@ export default function ReadAiSettings() {
       const data = await res.json();
       if (data.state) {
         setState(data.state);
-        setDateStart(data.state.date_range_start || "");
-        setDateEnd(data.state.date_range_end || "");
         setIncludeKw((data.state.include_keywords || []).join(", "));
         setExcludeKw((data.state.exclude_keywords || []).join(", "));
         setExcludePatterns(
@@ -132,7 +128,7 @@ export default function ReadAiSettings() {
     loadState();
   }, [loadState]);
 
-  /* ---- Connect ---- */
+  /* ---- Connect (webhook-based) ---- */
   async function handleConnect() {
     setError("");
     setMessage("");
@@ -143,9 +139,6 @@ export default function ReadAiSettings() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "connect",
-          api_key: apiKeyInput,
-          date_range_start: dateStart || undefined,
-          date_range_end: dateEnd || undefined,
           exclude_meeting_patterns: excludePatterns
             ? excludePatterns.split(",").map((s) => s.trim()).filter(Boolean)
             : [],
@@ -155,8 +148,9 @@ export default function ReadAiSettings() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
-      setMessage("Connected to Read.ai");
-      setApiKeyInput("");
+      setMessage(
+        "Connected! Copy the webhook URL below and paste it in your Read.ai webhook settings."
+      );
       await loadState();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Connection failed");
@@ -186,6 +180,38 @@ export default function ReadAiSettings() {
     }
   }
 
+  /* ---- Copy webhook URL ---- */
+  async function handleCopyWebhookUrl() {
+    if (!state?.webhook_secret) return;
+    const url = getWebhookUrl(state.webhook_secret);
+    await navigator.clipboard.writeText(url);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
+  /* ---- Regenerate token ---- */
+  async function handleRegenerateToken() {
+    setError("");
+    setActionLoading("regenerate");
+    try {
+      const res = await fetch("/api/readai/connect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "regenerate_token" }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setMessage(
+        "Webhook token regenerated. Update the URL in your Read.ai webhook settings."
+      );
+      await loadState();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Regeneration failed");
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
   /* ---- Save settings ---- */
   async function handleSaveSettings() {
     setError("");
@@ -196,8 +222,6 @@ export default function ReadAiSettings() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "update_settings",
-          date_range_start: dateStart || undefined,
-          date_range_end: dateEnd || undefined,
           include_keywords: includeKw
             ? includeKw.split(",").map((s) => s.trim()).filter(Boolean)
             : [],
@@ -222,88 +246,25 @@ export default function ReadAiSettings() {
     }
   }
 
-  /* ---- Run full import wizard ---- */
-  async function handleFullImport() {
+  /* ---- Process unprocessed meetings ---- */
+  async function handleProcessNow() {
     setError("");
     setMessage("");
-    setWizardStep("importing");
-    setWizardResults({});
-
+    setActionLoading("process");
     try {
-      // Step 1: Import
-      const importRes = await fetch("/api/readai/import", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "import_meetings" }),
-      });
-      const importData = await importRes.json();
-      if (!importRes.ok) throw new Error(importData.error);
-      setWizardResults((prev) => ({
-        ...prev,
-        import: {
-          imported: importData.imported,
-          filtered: importData.filtered,
-          total: importData.total,
-        },
-      }));
-
-      // Step 2: Process
-      setWizardStep("processing");
-      const processRes = await fetch("/api/readai/import", {
+      const res = await fetch("/api/readai/import", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "process_meetings" }),
       });
-      const processData = await processRes.json();
-      if (!processRes.ok) throw new Error(processData.error);
-      setWizardResults((prev) => ({
-        ...prev,
-        processing: {
-          processed: processData.processed,
-          artifacts: processData.totalArtifacts,
-        },
-      }));
-
-      // Step 3: Cluster
-      setWizardStep("clustering");
-      const clusterRes = await fetch("/api/readai/import", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "cluster_themes" }),
-      });
-      const clusterData = await clusterRes.json();
-      if (!clusterRes.ok) throw new Error(clusterData.error);
-      setWizardResults((prev) => ({
-        ...prev,
-        themes: clusterData,
-      }));
-
-      setWizardStep("done");
-      await loadState();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Import failed");
-      setWizardStep("idle");
-    }
-  }
-
-  /* ---- Sync now ---- */
-  async function handleSyncNow() {
-    setError("");
-    setMessage("");
-    setActionLoading("sync");
-    try {
-      const res = await fetch("/api/readai/sync", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-      });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       setMessage(
-        `Sync complete: ${data.imported} new meetings, ${data.artifacts} artifacts extracted.`
+        `Processed ${data.processed} meetings, extracted ${data.totalArtifacts} artifacts.`
       );
       await loadState();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Sync failed");
+      setError(e instanceof Error ? e.message : "Processing failed");
     } finally {
       setActionLoading(null);
     }
@@ -331,8 +292,8 @@ export default function ReadAiSettings() {
           Read.ai Integration
         </CardTitle>
         <CardDescription>
-          Import meeting reports to fuel your LinkedIn content with real
-          conversations, decisions, and insights.
+          Receive meeting reports via webhook to fuel your LinkedIn content with
+          real conversations, decisions, and insights.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -358,61 +319,24 @@ export default function ReadAiSettings() {
             <div className="rounded-lg border bg-muted/30 p-4 space-y-2">
               <p className="text-sm font-medium">How to connect</p>
               <ol className="text-sm text-muted-foreground space-y-1 list-decimal list-inside">
+                <li>Click &quot;Enable Webhook&quot; below to generate your unique webhook URL</li>
                 <li>
-                  Go to your Read.ai account settings and generate an API key
+                  Go to your{" "}
+                  <a
+                    href="https://app.read.ai/analytics/integrations/webhooks"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline text-foreground"
+                  >
+                    Read.ai webhook settings
+                  </a>
                 </li>
-                <li>Paste the API key below</li>
-                <li>Configure date range and privacy settings</li>
-                <li>Run the initial import</li>
+                <li>Paste the webhook URL and enable the integration</li>
+                <li>Meeting reports will be sent automatically when meetings end</li>
               </ol>
             </div>
 
             <div className="space-y-3">
-              <div className="flex gap-3">
-                <Input
-                  type="password"
-                  className="flex-1"
-                  placeholder="Read.ai API key..."
-                  value={apiKeyInput}
-                  onChange={(e) => setApiKeyInput(e.target.value)}
-                />
-                <Button
-                  onClick={handleConnect}
-                  disabled={!apiKeyInput.trim() || actionLoading === "connect"}
-                >
-                  {actionLoading === "connect" ? (
-                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                  ) : (
-                    <Zap className="h-4 w-4 mr-2" />
-                  )}
-                  Connect
-                </Button>
-              </div>
-
-              {/* Pre-connect settings */}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs text-muted-foreground block mb-1">
-                    Start Date (optional)
-                  </label>
-                  <Input
-                    type="date"
-                    value={dateStart}
-                    onChange={(e) => setDateStart(e.target.value)}
-                  />
-                </div>
-                <div>
-                  <label className="text-xs text-muted-foreground block mb-1">
-                    End Date (optional)
-                  </label>
-                  <Input
-                    type="date"
-                    value={dateEnd}
-                    onChange={(e) => setDateEnd(e.target.value)}
-                  />
-                </div>
-              </div>
-
               <div>
                 <label className="text-xs text-muted-foreground block mb-1">
                   Exclude meeting patterns (comma-separated, e.g. &quot;1:1, standup, daily&quot;)
@@ -439,6 +363,18 @@ export default function ReadAiSettings() {
                 </button>
                 <span className="text-sm">Redact participant names</span>
               </div>
+
+              <Button
+                onClick={handleConnect}
+                disabled={actionLoading === "connect"}
+              >
+                {actionLoading === "connect" ? (
+                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                ) : (
+                  <Zap className="h-4 w-4 mr-2" />
+                )}
+                Enable Webhook
+              </Button>
             </div>
           </div>
         )}
@@ -453,7 +389,7 @@ export default function ReadAiSettings() {
               <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium text-emerald-800">
-                  Connected to Read.ai
+                  Webhook Active
                 </p>
                 <div className="flex flex-wrap gap-3 mt-1 text-xs text-emerald-600">
                   <span>{counts.meetings} meetings</span>
@@ -467,7 +403,7 @@ export default function ReadAiSettings() {
                 </div>
                 {state.last_sync_at && (
                   <p className="text-xs text-emerald-600 mt-0.5">
-                    Last synced:{" "}
+                    Last received:{" "}
                     {new Date(state.last_sync_at).toLocaleString()}
                   </p>
                 )}
@@ -483,6 +419,61 @@ export default function ReadAiSettings() {
               </Button>
             </div>
 
+            {/* Webhook URL */}
+            {state.webhook_secret && (
+              <div className="space-y-2">
+                <label className="text-xs font-medium text-muted-foreground block">
+                  Webhook URL — paste this in your{" "}
+                  <a
+                    href="https://app.read.ai/analytics/integrations/webhooks"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline"
+                  >
+                    Read.ai webhook settings
+                  </a>
+                </label>
+                <div className="flex gap-2">
+                  <Input
+                    readOnly
+                    value={getWebhookUrl(state.webhook_secret)}
+                    className="flex-1 font-mono text-xs"
+                    onClick={(e) => (e.target as HTMLInputElement).select()}
+                  />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleCopyWebhookUrl}
+                    className="shrink-0"
+                  >
+                    {copied ? (
+                      <Check className="h-3.5 w-3.5" />
+                    ) : (
+                      <Copy className="h-3.5 w-3.5" />
+                    )}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleRegenerateToken}
+                    disabled={actionLoading === "regenerate"}
+                    className="shrink-0"
+                    title="Regenerate webhook token"
+                  >
+                    {actionLoading === "regenerate" ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <RotateCcw className="h-3.5 w-3.5" />
+                    )}
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Meetings will be automatically imported and processed when
+                  Read.ai sends a webhook after each meeting ends.
+                </p>
+              </div>
+            )}
+
             {/* Error display */}
             {state.last_error && (
               <div className="flex items-start gap-2 rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800">
@@ -494,121 +485,20 @@ export default function ReadAiSettings() {
               </div>
             )}
 
-            {/* Sync controls */}
-            <div className="flex flex-wrap gap-2">
-              {!state.last_import_at ? (
-                <Button
-                  onClick={handleFullImport}
-                  disabled={wizardStep !== "idle"}
-                >
-                  {wizardStep !== "idle" ? (
-                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                  ) : (
-                    <Download className="h-4 w-4 mr-2" />
-                  )}
-                  Run Initial Import
-                </Button>
-              ) : (
-                <>
-                  <Button
-                    onClick={handleSyncNow}
-                    disabled={!!actionLoading || wizardStep !== "idle"}
-                  >
-                    {actionLoading === "sync" ? (
-                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                    ) : (
-                      <RefreshCw className="h-4 w-4 mr-2" />
-                    )}
-                    Sync Now
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={handleFullImport}
-                    disabled={!!actionLoading || wizardStep !== "idle"}
-                  >
-                    {wizardStep !== "idle" ? (
-                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                    ) : null}
-                    Full Re-import
-                  </Button>
-                </>
-              )}
-            </div>
-
-            {/* Import wizard progress */}
-            {wizardStep !== "idle" && (
-              <div className="rounded-lg border p-4 space-y-3 bg-muted/30">
-                <p className="text-sm font-medium">Import Progress</p>
-
-                {/* Step 1 */}
-                <div className="flex items-center gap-2 text-sm">
-                  {wizardStep === "importing" ? (
-                    <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                  ) : wizardResults.import ? (
-                    <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-                  ) : (
-                    <div className="h-4 w-4 rounded-full border" />
-                  )}
-                  <span>
-                    Importing meetings
-                    {wizardResults.import && (
-                      <span className="text-muted-foreground ml-1">
-                        ({wizardResults.import.imported} imported,{" "}
-                        {wizardResults.import.filtered} filtered of{" "}
-                        {wizardResults.import.total})
-                      </span>
-                    )}
-                  </span>
-                </div>
-
-                {/* Step 2 */}
-                <div className="flex items-center gap-2 text-sm">
-                  {wizardStep === "processing" ? (
-                    <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                  ) : wizardResults.processing ? (
-                    <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-                  ) : (
-                    <div className="h-4 w-4 rounded-full border" />
-                  )}
-                  <span>
-                    Extracting artifacts
-                    {wizardResults.processing && (
-                      <span className="text-muted-foreground ml-1">
-                        ({wizardResults.processing.artifacts} from{" "}
-                        {wizardResults.processing.processed} meetings)
-                      </span>
-                    )}
-                  </span>
-                </div>
-
-                {/* Step 3 */}
-                <div className="flex items-center gap-2 text-sm">
-                  {wizardStep === "clustering" ? (
-                    <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                  ) : wizardResults.themes ? (
-                    <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-                  ) : (
-                    <div className="h-4 w-4 rounded-full border" />
-                  )}
-                  <span>
-                    Clustering themes
-                    {wizardResults.themes && (
-                      <span className="text-muted-foreground ml-1">
-                        ({wizardResults.themes.themesCreated} created,{" "}
-                        {wizardResults.themes.themesUpdated} updated)
-                      </span>
-                    )}
-                  </span>
-                </div>
-
-                {wizardStep === "done" && (
-                  <div className="flex items-center gap-2 rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2 text-sm text-emerald-800 mt-2">
-                    <CheckCircle2 className="h-4 w-4" />
-                    Import complete! Browse your meetings and insights in the
-                    Library.
-                  </div>
+            {/* Process unprocessed meetings */}
+            {counts.unprocessed > 0 && (
+              <Button
+                variant="outline"
+                onClick={handleProcessNow}
+                disabled={!!actionLoading}
+              >
+                {actionLoading === "process" ? (
+                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                ) : (
+                  <RefreshCw className="h-4 w-4 mr-2" />
                 )}
-              </div>
+                Process {counts.unprocessed} Unprocessed Meetings
+              </Button>
             )}
 
             {/* Scope & Filters */}
@@ -627,29 +517,6 @@ export default function ReadAiSettings() {
 
             {showSettings && (
               <div className="space-y-3 rounded-lg border p-4 bg-muted/30">
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-xs text-muted-foreground block mb-1">
-                      Start Date
-                    </label>
-                    <Input
-                      type="date"
-                      value={dateStart}
-                      onChange={(e) => setDateStart(e.target.value)}
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs text-muted-foreground block mb-1">
-                      End Date
-                    </label>
-                    <Input
-                      type="date"
-                      value={dateEnd}
-                      onChange={(e) => setDateEnd(e.target.value)}
-                    />
-                  </div>
-                </div>
-
                 <div>
                   <label className="text-xs text-muted-foreground block mb-1">
                     Include keywords (comma-separated)
