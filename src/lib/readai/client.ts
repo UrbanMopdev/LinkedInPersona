@@ -1,11 +1,10 @@
 /**
- * Read.ai API client for fetching meeting data.
+ * Read.ai utility functions for meeting data processing.
  *
- * Read.ai exposes meeting reports via their REST API.
- * Docs: https://docs.read.ai/api
+ * Read.ai integration uses webhooks (not REST polling).
+ * Meeting data is pushed to /api/readai/webhook when meetings end.
+ * See: https://support.read.ai/hc/en-us/articles/16352415827219
  */
-
-const READAI_API_BASE = "https://api.read.ai/v1";
 
 export interface ReadAiMeeting {
   id: string;
@@ -28,124 +27,6 @@ export interface ReadAiMeeting {
   }>;
   sentiment?: string;
   source_url?: string;
-}
-
-export interface ReadAiListResponse {
-  meetings: ReadAiMeeting[];
-  next_cursor?: string;
-  has_more: boolean;
-}
-
-/**
- * Fetch meetings from Read.ai API with pagination and date filtering.
- */
-export async function fetchReadAiMeetings(
-  apiKey: string,
-  options: {
-    startDate?: string;
-    endDate?: string;
-    cursor?: string;
-    limit?: number;
-  } = {}
-): Promise<ReadAiListResponse> {
-  const params = new URLSearchParams();
-  if (options.startDate) params.set("start_date", options.startDate);
-  if (options.endDate) params.set("end_date", options.endDate);
-  if (options.cursor) params.set("cursor", options.cursor);
-  if (options.limit) params.set("limit", String(options.limit));
-
-  const res = await fetch(`${READAI_API_BASE}/meetings?${params.toString()}`, {
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-  });
-
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`Read.ai API error (${res.status}): ${body}`);
-  }
-
-  return res.json();
-}
-
-/**
- * Fetch a single meeting's full report including transcript.
- */
-export async function fetchReadAiMeetingDetail(
-  apiKey: string,
-  meetingId: string
-): Promise<ReadAiMeeting> {
-  const res = await fetch(`${READAI_API_BASE}/meetings/${meetingId}`, {
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-  });
-
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`Read.ai API error (${res.status}): ${body}`);
-  }
-
-  return res.json();
-}
-
-/**
- * Validate a Read.ai API key by making a lightweight call.
- */
-export async function validateReadAiKey(
-  apiKey: string
-): Promise<{ valid: boolean; error?: string }> {
-  try {
-    const res = await fetch(`${READAI_API_BASE}/meetings?limit=1`, {
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-    });
-
-    if (res.ok) return { valid: true };
-    if (res.status === 401 || res.status === 403) {
-      return { valid: false, error: "Invalid API key" };
-    }
-    return { valid: false, error: `API returned ${res.status}` };
-  } catch (err) {
-    return {
-      valid: false,
-      error: err instanceof Error ? err.message : "Connection failed",
-    };
-  }
-}
-
-/**
- * Fetch all meetings in a date range (handles pagination).
- */
-export async function fetchAllReadAiMeetings(
-  apiKey: string,
-  options: {
-    startDate?: string;
-    endDate?: string;
-  } = {}
-): Promise<ReadAiMeeting[]> {
-  const allMeetings: ReadAiMeeting[] = [];
-  let cursor: string | undefined;
-  let hasMore = true;
-
-  while (hasMore) {
-    const response = await fetchReadAiMeetings(apiKey, {
-      startDate: options.startDate,
-      endDate: options.endDate,
-      cursor,
-      limit: 50,
-    });
-
-    allMeetings.push(...response.meetings);
-    cursor = response.next_cursor;
-    hasMore = response.has_more;
-  }
-
-  return allMeetings;
 }
 
 /**
